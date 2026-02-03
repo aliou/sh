@@ -990,3 +990,239 @@ describe("parse (phase 21: coproc)", () => {
     });
   });
 });
+
+// Real-world guardrail validation tests.
+// The guardrails extension blocks commands matching /\bnpm\b/ on the full
+// command string. This causes false positives when "npm" appears in arguments,
+// grep patterns, heredocs, or subcommand strings rather than as the actual
+// command being invoked.
+//
+// These tests validate that the parser produces an AST where the actual
+// command name (first word of a SimpleCommand) is distinguishable from
+// arguments, allowing a smarter guardrail to only check command positions.
+describe("guardrail validation: package manager enforcement", () => {
+  // Helper: extract all command names (first word of each SimpleCommand) from
+  // a parsed program, recursively walking the AST.
+  function extractCommandNames(node: unknown): string[] {
+    if (!node || typeof node !== "object") return [];
+    const n = node as Record<string, unknown>;
+    const names: string[] = [];
+
+    if (
+      n.type === "SimpleCommand" &&
+      Array.isArray(n.words) &&
+      n.words.length > 0
+    ) {
+      const firstWord = n.words[0] as
+        | { parts: Array<{ type: string; value?: string }> }
+        | undefined;
+      // Only extract if first word is a plain literal (no expansions)
+      if (
+        firstWord &&
+        firstWord.parts.length === 1 &&
+        firstWord.parts[0]?.type === "Literal"
+      ) {
+        names.push(firstWord.parts[0].value as string);
+      }
+    }
+
+    for (const val of Object.values(n)) {
+      if (Array.isArray(val)) {
+        for (const item of val) {
+          names.push(...extractCommandNames(item));
+        }
+      } else if (val && typeof val === "object") {
+        names.push(...extractCommandNames(val));
+      }
+    }
+    return names;
+  }
+
+  it("grep for npm pattern is not an npm command", () => {
+    const { ast } = parse(String.raw`grep -rn '\bnpm\b' src/`);
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["grep"]);
+    expect(cmds).not.toContain("npm");
+  });
+
+  it("grep with multiple patterns including npm/npx", () => {
+    const { ast } = parse(
+      String.raw`grep -rn '\bnpx\b\|\bnpm \b\|\bnpm$' AGENTS.md`,
+    );
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["grep"]);
+  });
+
+  it("echo containing npm is not an npm command", () => {
+    const { ast } = parse('echo "use npm install instead"');
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["echo"]);
+  });
+
+  it("cat of package.json (which contains npm) is not npm", () => {
+    const { ast } = parse("cat /path/to/package.json");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["cat"]);
+  });
+
+  it("npx wrangler is an npx command, not npm", () => {
+    const { ast } = parse("npx wrangler --version");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["npx"]);
+    expect(cmds).not.toContain("npm");
+  });
+
+  it("actual npm install is correctly identified", () => {
+    const { ast } = parse("npm install --omit=dev");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toContain("npm");
+  });
+
+  it("actual npm ci is correctly identified", () => {
+    const { ast } = parse("npm ci");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toContain("npm");
+  });
+
+  it("pnpm command is identified as pnpm, not npm", () => {
+    const { ast } = parse("pnpm --filter pi-relay-server typecheck");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["pnpm"]);
+    expect(cmds).not.toContain("npm");
+  });
+
+  it("cd && pnpm: both commands identified correctly", () => {
+    const { ast } = parse("cd /project && pnpm --filter pi-relay-server test");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["cd", "pnpm"]);
+    expect(cmds).not.toContain("npm");
+  });
+
+  it("npm in || fallback: both branches identified", () => {
+    const { ast } = parse(
+      "npm ci --omit=dev 2>/dev/null || npm install --omit=dev",
+    );
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["npm", "npm"]);
+  });
+
+  it("which npm is not running npm", () => {
+    const { ast } = parse("which npm 2>/dev/null || echo 'npm not found'");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["which", "echo"]);
+    expect(cmds).not.toContain("npm");
+  });
+
+  it("heredoc containing npm install is not an npm command", () => {
+    const input = `cat <<'EOF'
+RUN npm install --omit=dev
+npm ci
+EOF`;
+    const { ast } = parse(input);
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["cat"]);
+    expect(cmds).not.toContain("npm");
+  });
+
+  it("docker build with heredoc Dockerfile containing npm", () => {
+    const input = `docker build -t myimage -f - . <<'DOCKERFILE'
+FROM node:22-slim
+RUN npm install --omit=dev
+DOCKERFILE`;
+    const { ast } = parse(input);
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["docker"]);
+    expect(cmds).not.toContain("npm");
+  });
+
+  it("command substitution: inner npm is a real command", () => {
+    const { ast } = parse("echo $(npm pack)");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toContain("echo");
+    expect(cmds).toContain("npm");
+  });
+
+  it("pipeline: only first words are commands", () => {
+    const { ast } = parse("find . -name '*.json' | grep npm | head -5");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["find", "grep", "head"]);
+    expect(cmds).not.toContain("npm");
+  });
+
+  it("subshell: npm inside is a real command", () => {
+    const { ast } = parse("(cd /tmp && npm install)");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toContain("cd");
+    expect(cmds).toContain("npm");
+  });
+
+  it("if condition with npm check", () => {
+    const { ast } = parse("if command -v npm; then echo found; fi");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toContain("command");
+    expect(cmds).toContain("echo");
+    // "npm" is an argument to "command -v", not a command itself
+    expect(cmds).not.toContain("npm");
+  });
+
+  it("variable assignment containing npm is not a command", () => {
+    const { ast } = parse('PKG_MGR=npm echo "using $PKG_MGR"');
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["echo"]);
+    expect(cmds).not.toContain("npm");
+  });
+
+  it("herestring containing npm is not a command", () => {
+    const { ast } = parse("grep -c npm <<< 'npm install pnpm bun'");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["grep"]);
+  });
+
+  it("real session: cd && pnpm filter test piped to tail", () => {
+    const { ast } = parse(
+      "cd /project && pnpm --filter pi-relay-server test 2>&1 | tail -15",
+    );
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toContain("cd");
+    expect(cmds).toContain("pnpm");
+    expect(cmds).toContain("tail");
+    expect(cmds).not.toContain("npm");
+  });
+
+  it("real session: curl piped to jq (no npm)", () => {
+    const { ast } = parse("curl -s http://localhost:31415/health | jq .");
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["curl", "jq"]);
+  });
+
+  it("real session: biome check with npm in path is not npm", () => {
+    const { ast } = parse(
+      "pnpm exec biome check --write src/sandbox/cloudflare.test.ts",
+    );
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toEqual(["pnpm"]);
+  });
+
+  it("real session: write Dockerfile via heredoc then docker build", () => {
+    const input = `mkdir -p /tmp/cf-sandbox-test && \\
+cp bridge.js /tmp/cf-sandbox-test/ && \\
+cat > /tmp/cf-sandbox-test/Dockerfile <<'DOCKERFILE'
+FROM node:22-slim
+RUN apt-get update && apt-get install -y curl tar bash git
+WORKDIR /bridge
+COPY package.json ./
+RUN npm install --omit=dev 2>/dev/null || true
+COPY bridge.js ./
+CMD ["node", "/bridge/bridge.js"]
+DOCKERFILE
+
+docker build --platform linux/arm64 -t pi-sandbox-cf:arm64-debian /tmp/cf-sandbox-test`;
+    const { ast } = parse(input);
+    const cmds = extractCommandNames(ast);
+    expect(cmds).toContain("mkdir");
+    expect(cmds).toContain("cp");
+    expect(cmds).toContain("cat");
+    expect(cmds).toContain("docker");
+    expect(cmds).not.toContain("npm");
+  });
+});
