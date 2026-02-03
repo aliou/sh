@@ -35,6 +35,12 @@ export type WhileClause = {
   body: Statement[];
   until?: boolean;
 };
+export type ForClause = {
+  type: "ForClause";
+  name: string;
+  items?: Word[];
+  body: Statement[];
+};
 export type Pipeline = { type: "Pipeline"; commands: Statement[] };
 export type Logical = {
   type: "Logical";
@@ -48,6 +54,7 @@ export type Command =
   | Block
   | IfClause
   | WhileClause
+  | ForClause
   | Pipeline
   | Logical;
 export type Statement = {
@@ -384,6 +391,9 @@ class Parser {
     if (this.matchKeyword("until")) {
       return this.parseWhileClause(true);
     }
+    if (this.matchKeyword("for")) {
+      return this.parseForClause();
+    }
     if (this.matchSymbol("(")) {
       return this.parseSubshell();
     }
@@ -458,6 +468,40 @@ class Parser {
     return until
       ? { type: "WhileClause", cond, body, until: true }
       : { type: "WhileClause", cond, body };
+  }
+
+  private parseForClause(): ForClause {
+    this.consumeKeyword("for");
+    const nameToken = this.consume();
+    if (nameToken.type !== "word") {
+      throw new Error("Expected loop variable name");
+    }
+    const name = nameToken.parts.join("");
+    let items: Word[] | undefined;
+    if (this.matchKeyword("in")) {
+      this.consumeKeyword("in");
+      const collected: Word[] = [];
+      while (this.matchWord() && !this.matchKeyword("do")) {
+        const itemToken = this.consume();
+        if (itemToken.type !== "word") {
+          throw new Error("Expected loop item word");
+        }
+        collected.push(this.wordFromParts(itemToken.parts));
+      }
+      if (collected.length > 0) {
+        items = collected;
+      }
+    }
+    if (this.matchOp(";")) {
+      this.consume();
+    }
+    this.skipSeparators();
+    this.consumeKeyword("do");
+    const body = this.parseStatementsUntilKeyword(["done"]);
+    this.consumeKeyword("done");
+    return items
+      ? { type: "ForClause", name, items, body }
+      : { type: "ForClause", name, body };
   }
 
   private parseStatementsUntilKeyword(endKeywords: string[]): Statement[] {
