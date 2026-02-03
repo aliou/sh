@@ -8,7 +8,19 @@ export type ParseOptions = {
 
 export type Literal = { type: "Literal"; value: string };
 export type Word = { type: "Word"; parts: Literal[] };
-export type SimpleCommand = { type: "SimpleCommand"; words: Word[] };
+export type Assignment = { type: "Assignment"; name: string; value?: Word };
+export type Redirect = {
+  type: "Redirect";
+  op: ">" | "<" | ">>";
+  fd?: string;
+  target: Word;
+};
+export type SimpleCommand = {
+  type: "SimpleCommand";
+  words?: Word[];
+  assignments?: Assignment[];
+  redirects?: Redirect[];
+};
 export type Pipeline = { type: "Pipeline"; commands: Statement[] };
 export type Logical = {
   type: "Logical";
@@ -32,7 +44,8 @@ type OpTokenValue = "&&" | "||" | "|" | ";" | "&";
 
 type Token =
   | { type: "word"; parts: string[] }
-  | { type: "op"; value: OpTokenValue };
+  | { type: "op"; value: OpTokenValue }
+  | { type: "redir"; op: ">" | "<" | ">>"; fd?: string };
 
 export function parse(
   source: string,
@@ -46,6 +59,9 @@ export function parse(
 }
 
 const operatorChars = new Set([";", "|", "&"]);
+const redirChars = new Set([">", "<"]);
+
+const isDigit = (value: string) => value >= "0" && value <= "9";
 
 function tokenize(source: string): Token[] {
   const tokens: Token[] = [];
@@ -87,6 +103,38 @@ function tokenize(source: string): Token[] {
       while (i < source.length && source.charAt(i) !== "\n") {
         i += 1;
       }
+      continue;
+    }
+
+    if (isDigit(ch)) {
+      let j = i;
+      while (j < source.length && isDigit(source.charAt(j))) {
+        j += 1;
+      }
+      const nextChar = source.charAt(j);
+      if (nextChar === ">" || nextChar === "<") {
+        const fd = source.slice(i, j);
+        if (nextChar === ">" && source.charAt(j + 1) === ">") {
+          tokens.push({ type: "redir", op: ">>", fd });
+          i = j + 2;
+        } else {
+          tokens.push({ type: "redir", op: nextChar, fd });
+          i = j + 1;
+        }
+        atBoundary = true;
+        continue;
+      }
+    }
+
+    if (ch === ">" || ch === "<") {
+      if (ch === ">" && source.charAt(i + 1) === ">") {
+        tokens.push({ type: "redir", op: ">>" });
+        i += 2;
+      } else {
+        tokens.push({ type: "redir", op: ch });
+        i += 1;
+      }
+      atBoundary = true;
       continue;
     }
 
@@ -134,7 +182,8 @@ function tokenize(source: string): Token[] {
         currentChar === "\t" ||
         currentChar === "\r" ||
         currentChar === "\n" ||
-        operatorChars.has(currentChar)
+        operatorChars.has(currentChar) ||
+        redirChars.has(currentChar)
       ) {
         break;
       }
@@ -237,7 +286,9 @@ class Parser {
       const display = token
         ? token.type === "op"
           ? token.value
-          : token.parts.join("")
+          : token.type === "redir"
+            ? token.op
+            : token.parts.join("")
         : "";
       throw new Error(`Unexpected token: ${display}`);
     }
@@ -290,22 +341,95 @@ class Parser {
 
   private parseSimpleCommand(): SimpleCommand {
     const words: Word[] = [];
-    while (this.matchWord()) {
-      const token = this.consume();
-      if (token.type !== "word") {
-        throw new Error("Expected word token");
+    const assignments: Assignment[] = [];
+    const redirects: Redirect[] = [];
+    let sawWord = false;
+
+    while (true) {
+      if (this.matchWord()) {
+        const token = this.consume();
+        if (token.type !== "word") {
+          throw new Error("Expected word token");
+        }
+        const word = this.wordFromParts(token.parts);
+        const assignment = this.assignmentFromParts(token.parts);
+        if (!sawWord && assignment) {
+          assignments.push(assignment);
+        } else {
+          sawWord = true;
+          words.push(word);
+        }
+        continue;
       }
-      words.push({
-        type: "Word",
-        parts: token.parts.map((part) => ({ type: "Literal", value: part })),
-      });
+
+      if (this.matchRedir()) {
+        const token = this.consume();
+        if (token.type !== "redir") {
+          throw new Error("Expected redirect token");
+        }
+        const targetToken = this.consume();
+        if (targetToken.type !== "word") {
+          throw new Error("Redirect must be followed by a word");
+        }
+        const target = this.wordFromParts(targetToken.parts);
+        const redirect: Redirect = token.fd
+          ? { type: "Redirect", op: token.op, fd: token.fd, target }
+          : { type: "Redirect", op: token.op, target };
+        redirects.push(redirect);
+        continue;
+      }
+
+      break;
     }
 
-    if (words.length === 0) {
+    if (
+      words.length === 0 &&
+      assignments.length === 0 &&
+      redirects.length === 0
+    ) {
       throw new Error("Expected a command word");
     }
 
-    return { type: "SimpleCommand", words };
+    const command: SimpleCommand = { type: "SimpleCommand" };
+    if (words.length > 0) {
+      command.words = words;
+    }
+    if (assignments.length > 0) {
+      command.assignments = assignments;
+    }
+    if (redirects.length > 0) {
+      command.redirects = redirects;
+    }
+    return command;
+  }
+
+  private wordFromParts(parts: string[]): Word {
+    return {
+      type: "Word",
+      parts: parts.map((part) => ({ type: "Literal", value: part })),
+    };
+  }
+
+  private assignmentFromParts(parts: string[]): Assignment | undefined {
+    if (parts.length !== 1) {
+      return undefined;
+    }
+    const raw = parts[0];
+    if (!raw) {
+      return undefined;
+    }
+    const eqIndex = raw.indexOf("=");
+    if (eqIndex <= 0) {
+      return undefined;
+    }
+    const name = raw.slice(0, eqIndex);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      return undefined;
+    }
+    const value = raw.slice(eqIndex + 1);
+    return value.length === 0
+      ? { type: "Assignment", name }
+      : { type: "Assignment", name, value: this.wordFromParts([value]) };
   }
 
   private skipSeparators() {
@@ -321,6 +445,10 @@ class Parser {
 
   private matchWord() {
     return this.peek()?.type === "word";
+  }
+
+  private matchRedir() {
+    return this.peek()?.type === "redir";
   }
 
   private consume(): Token {
