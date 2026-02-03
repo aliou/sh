@@ -28,9 +28,11 @@ export type ParseResult = {
   ast: Program;
 };
 
+type OpTokenValue = "&&" | "||" | "|" | ";" | "&";
+
 type Token =
-  | { type: "word"; value: string }
-  | { type: "op"; value: "&&" | "||" | "|" | ";" | "&" };
+  | { type: "word"; parts: string[] }
+  | { type: "op"; value: OpTokenValue };
 
 export function parse(
   source: string,
@@ -59,6 +61,20 @@ function tokenize(source: string): Token[] {
       continue;
     }
 
+    if (ch === "\\" && source.charAt(i + 1) === "\n") {
+      atBoundary = true;
+      i += 2;
+      continue;
+    }
+
+    if (ch === "\\" && source.charAt(i + 1) === "\r") {
+      if (source.charAt(i + 2) === "\n") {
+        atBoundary = true;
+        i += 3;
+        continue;
+      }
+    }
+
     if (ch === "\n") {
       tokens.push({ type: "op", value: ";" });
       atBoundary = true;
@@ -68,7 +84,7 @@ function tokenize(source: string): Token[] {
 
     if (ch === "#" && atBoundary) {
       i += 1;
-      while (i < source.length && source[i] !== "\n") {
+      while (i < source.length && source.charAt(i) !== "\n") {
         i += 1;
       }
       continue;
@@ -95,26 +111,105 @@ function tokenize(source: string): Token[] {
       continue;
     }
 
-    const start = i;
+    const parts: string[] = [];
+    let current = "";
+
     while (i < source.length) {
-      const current = source.charAt(i);
+      const currentChar = source.charAt(i);
+
+      if (currentChar === "\\" && source.charAt(i + 1) === "\n") {
+        i += 2;
+        continue;
+      }
+
+      if (currentChar === "\\" && source.charAt(i + 1) === "\r") {
+        if (source.charAt(i + 2) === "\n") {
+          i += 3;
+          continue;
+        }
+      }
+
       if (
-        current === " " ||
-        current === "\t" ||
-        current === "\r" ||
-        current === "\n" ||
-        operatorChars.has(current)
+        currentChar === " " ||
+        currentChar === "\t" ||
+        currentChar === "\r" ||
+        currentChar === "\n" ||
+        operatorChars.has(currentChar)
       ) {
         break;
       }
+
+      if (currentChar === "'") {
+        if (current.length > 0) {
+          parts.push(current);
+          current = "";
+        }
+        i += 1;
+        const start = i;
+        while (i < source.length && source.charAt(i) !== "'") {
+          i += 1;
+        }
+        if (i >= source.length) {
+          throw new Error("Unclosed single quote");
+        }
+        parts.push(source.slice(start, i));
+        i += 1;
+        continue;
+      }
+
+      if (currentChar === '"') {
+        if (current.length > 0) {
+          parts.push(current);
+          current = "";
+        }
+        i += 1;
+        let buffer = "";
+        let closed = false;
+        while (i < source.length) {
+          const dqChar = source.charAt(i);
+          if (dqChar === "\\" && source.charAt(i + 1) === "\n") {
+            i += 2;
+            continue;
+          }
+          if (dqChar === "\\" && source.charAt(i + 1) === "\r") {
+            if (source.charAt(i + 2) === "\n") {
+              i += 3;
+              continue;
+            }
+          }
+          if (dqChar === "\\" && i + 1 < source.length) {
+            buffer += dqChar + source.charAt(i + 1);
+            i += 2;
+            continue;
+          }
+          if (dqChar === '"') {
+            i += 1;
+            closed = true;
+            break;
+          }
+          buffer += dqChar;
+          i += 1;
+        }
+        if (!closed) {
+          throw new Error("Unclosed double quote");
+        }
+        parts.push(buffer);
+        continue;
+      }
+
+      current += currentChar;
       i += 1;
     }
 
-    const value = source.slice(start, i);
-    if (value.length === 0) {
+    if (current.length > 0) {
+      parts.push(current);
+    }
+
+    if (parts.length === 0) {
       throw new Error("Unexpected character");
     }
-    tokens.push({ type: "word", value });
+
+    tokens.push({ type: "word", parts });
     atBoundary = false;
   }
 
@@ -138,7 +233,13 @@ class Parser {
 
   assertEof() {
     if (!this.isEof()) {
-      throw new Error(`Unexpected token: ${this.peek()?.value ?? ""}`);
+      const token = this.peek();
+      const display = token
+        ? token.type === "op"
+          ? token.value
+          : token.parts.join("")
+        : "";
+      throw new Error(`Unexpected token: ${display}`);
     }
   }
 
@@ -158,6 +259,9 @@ class Parser {
     let leftCommand = this.parsePipeline();
     while (this.matchOp("&&") || this.matchOp("||")) {
       const opToken = this.consume();
+      if (opToken.type !== "op") {
+        throw new Error("Expected logical operator");
+      }
       const rightCommand = this.parsePipeline();
       leftCommand = {
         type: "Logical",
@@ -188,9 +292,12 @@ class Parser {
     const words: Word[] = [];
     while (this.matchWord()) {
       const token = this.consume();
+      if (token.type !== "word") {
+        throw new Error("Expected word token");
+      }
       words.push({
         type: "Word",
-        parts: [{ type: "Literal", value: token.value }],
+        parts: token.parts.map((part) => ({ type: "Literal", value: part })),
       });
     }
 
@@ -207,7 +314,7 @@ class Parser {
     }
   }
 
-  private matchOp(value: Token["value"]) {
+  private matchOp(value: OpTokenValue) {
     const token = this.peek();
     return token?.type === "op" && token.value === value;
   }
