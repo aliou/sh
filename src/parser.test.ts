@@ -64,6 +64,19 @@ describe("parse (phase 1: simple commands)", () => {
         }),
       ),
     });
+
+    expect(parse("foo | bar | baz")).toEqual({
+      ast: program(
+        stmt({
+          type: "Pipeline",
+          commands: [
+            stmt(simple("foo")),
+            stmt(simple("bar")),
+            stmt(simple("baz")),
+          ],
+        }),
+      ),
+    });
   });
 
   it("parses logical and/or", () => {
@@ -85,6 +98,38 @@ describe("parse (phase 1: simple commands)", () => {
           op: "or",
           left: stmt(simple("foo")),
           right: stmt(simple("bar")),
+        }),
+      ),
+    });
+
+    expect(parse("foo && bar || baz")).toEqual({
+      ast: program(
+        stmt({
+          type: "Logical",
+          op: "or",
+          left: stmt({
+            type: "Logical",
+            op: "and",
+            left: stmt(simple("foo")),
+            right: stmt(simple("bar")),
+          }),
+          right: stmt(simple("baz")),
+        }),
+      ),
+    });
+  });
+
+  it("gives pipelines higher precedence than logical ops", () => {
+    expect(parse("foo | bar || baz")).toEqual({
+      ast: program(
+        stmt({
+          type: "Logical",
+          op: "or",
+          left: stmt({
+            type: "Pipeline",
+            commands: [stmt(simple("foo")), stmt(simple("bar"))],
+          }),
+          right: stmt(simple("baz")),
         }),
       ),
     });
