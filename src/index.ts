@@ -9,9 +9,22 @@ export type ParseOptions = {
 export type Literal = { type: "Literal"; value: string };
 export type Word = { type: "Word"; parts: Literal[] };
 export type Assignment = { type: "Assignment"; name: string; value?: Word };
+export type RedirOp =
+  | ">"
+  | "<"
+  | ">>"
+  | ">|"
+  | ">&"
+  | "<&"
+  | "<>"
+  | "&>"
+  | "&>>"
+  | "<<<"
+  | "<<"
+  | "<<-";
 export type Redirect = {
   type: "Redirect";
-  op: ">" | "<" | ">>";
+  op: RedirOp;
   fd?: string;
   target: Word;
 };
@@ -63,6 +76,13 @@ export type CaseClause = {
   items: CaseItem[];
 };
 export type TimeClause = { type: "TimeClause"; command: Statement };
+export type TestClause = { type: "TestClause"; expr: Word[] };
+export type ArithCmd = { type: "ArithCmd"; expr: string };
+export type CoprocClause = {
+  type: "CoprocClause";
+  name?: string;
+  body: Statement;
+};
 export type Pipeline = { type: "Pipeline"; commands: Statement[] };
 export type Logical = {
   type: "Logical";
@@ -81,6 +101,9 @@ export type Command =
   | FunctionDecl
   | CaseClause
   | TimeClause
+  | TestClause
+  | ArithCmd
+  | CoprocClause
   | Pipeline
   | Logical;
 export type Statement = {
@@ -102,8 +125,9 @@ type SymbolTokenValue = "(" | ")" | "{" | "}";
 type Token =
   | { type: "word"; parts: string[] }
   | { type: "op"; value: OpTokenValue }
-  | { type: "redir"; op: ">" | "<" | ">>"; fd?: string }
-  | { type: "symbol"; value: SymbolTokenValue };
+  | { type: "redir"; op: RedirOp; fd?: string }
+  | { type: "symbol"; value: SymbolTokenValue }
+  | { type: "arith-cmd"; expr: string };
 
 export function parse(
   source: string,
@@ -121,6 +145,25 @@ const redirChars = new Set([">", "<"]);
 const symbolChars = new Set(["(", ")", "{", "}"]);
 
 const isDigit = (value: string) => value >= "0" && value <= "9";
+
+function tryRedirOp(
+  source: string,
+  pos: number,
+): { op: RedirOp; len: number } | null {
+  if (source.startsWith("<<<", pos)) return { op: "<<<", len: 3 };
+  if (source.startsWith("&>>", pos)) return { op: "&>>", len: 3 };
+  if (source.startsWith("<<-", pos)) return { op: "<<-", len: 3 };
+  if (source.startsWith(">>", pos)) return { op: ">>", len: 2 };
+  if (source.startsWith(">&", pos)) return { op: ">&", len: 2 };
+  if (source.startsWith(">|", pos)) return { op: ">|", len: 2 };
+  if (source.startsWith("<>", pos)) return { op: "<>", len: 2 };
+  if (source.startsWith("<&", pos)) return { op: "<&", len: 2 };
+  if (source.startsWith("&>", pos)) return { op: "&>", len: 2 };
+  if (source.startsWith("<<", pos)) return { op: "<<", len: 2 };
+  if (source.charAt(pos) === ">") return { op: ">", len: 1 };
+  if (source.charAt(pos) === "<") return { op: "<", len: 1 };
+  return null;
+}
 
 function tokenize(source: string): Token[] {
   const tokens: Token[] = [];
@@ -177,31 +220,39 @@ function tokenize(source: string): Token[] {
       while (j < source.length && isDigit(source.charAt(j))) {
         j += 1;
       }
-      const nextChar = source.charAt(j);
-      if (nextChar === ">" || nextChar === "<") {
-        const fd = source.slice(i, j);
-        if (nextChar === ">" && source.charAt(j + 1) === ">") {
-          tokens.push({ type: "redir", op: ">>", fd });
-          i = j + 2;
-        } else {
-          tokens.push({ type: "redir", op: nextChar, fd });
-          i = j + 1;
-        }
+      const redir = tryRedirOp(source, j);
+      if (redir) {
+        tokens.push({ type: "redir", op: redir.op, fd: source.slice(i, j) });
+        i = j + redir.len;
         atBoundary = true;
         continue;
       }
     }
 
-    if (ch === ">" || ch === "<") {
-      if (ch === ">" && source.charAt(i + 1) === ">") {
-        tokens.push({ type: "redir", op: ">>" });
-        i += 2;
-      } else {
-        tokens.push({ type: "redir", op: ch });
-        i += 1;
+    if (ch === "(" && source.charAt(i + 1) === "(" && atBoundary) {
+      let j = i + 2;
+      let depth = 0;
+      while (j < source.length) {
+        const c = source.charAt(j);
+        if (c === ")" && source.charAt(j + 1) === ")" && depth === 0) break;
+        if (c === "(") depth++;
+        if (c === ")") depth--;
+        j++;
       }
+      tokens.push({ type: "arith-cmd", expr: source.slice(i + 2, j).trim() });
+      i = j + 2;
       atBoundary = true;
       continue;
+    }
+
+    {
+      const redir = tryRedirOp(source, i);
+      if (redir) {
+        tokens.push({ type: "redir", op: redir.op });
+        i += redir.len;
+        atBoundary = true;
+        continue;
+      }
     }
 
     if (symbolChars.has(ch)) {
@@ -364,7 +415,9 @@ class Parser {
             ? token.op
             : token.type === "symbol"
               ? token.value
-              : token.parts.join("")
+              : token.type === "arith-cmd"
+                ? "(( ... ))"
+                : token.parts.join("")
         : "";
       throw new Error(`Unexpected token: ${display}`);
     }
@@ -447,8 +500,17 @@ class Parser {
     if (this.matchKeyword("time")) {
       return this.parseTimeClause();
     }
+    if (this.matchKeyword("coproc")) {
+      return this.parseCoprocClause();
+    }
+    if (this.matchKeyword("[[")) {
+      return this.parseTestClause();
+    }
     if (this.matchKeyword("function") || this.looksLikeFuncDecl()) {
       return this.parseFunctionDecl();
+    }
+    if (this.matchArithCmd()) {
+      return this.consumeArithCmd();
     }
     if (this.matchSymbol("(")) {
       return this.parseSubshell();
@@ -698,6 +760,49 @@ class Parser {
     this.consumeKeyword("time");
     const command = this.parseStatement();
     return { type: "TimeClause", command };
+  }
+
+  private parseTestClause(): TestClause {
+    this.consumeKeyword("[[");
+    const words: Word[] = [];
+    while (!this.matchKeyword("]]")) {
+      if (this.isEof()) throw new Error("Unclosed [[");
+      const token = this.consume();
+      if (token.type !== "word") throw new Error("Expected word in [[ ]]");
+      words.push(this.wordFromParts(token.parts));
+    }
+    this.consumeKeyword("]]");
+    return { type: "TestClause", expr: words };
+  }
+
+  private matchArithCmd(): boolean {
+    return this.peek()?.type === "arith-cmd";
+  }
+
+  private consumeArithCmd(): ArithCmd {
+    const token = this.consume();
+    if (token.type !== "arith-cmd")
+      throw new Error("Expected arithmetic command");
+    return { type: "ArithCmd", expr: token.expr };
+  }
+
+  private parseCoprocClause(): CoprocClause {
+    this.consumeKeyword("coproc");
+    if (this.matchWord() && this.peekToken(1)?.type === "symbol") {
+      const nameToken = this.peek();
+      if (
+        nameToken?.type === "word" &&
+        this.peekToken(1)?.type === "symbol" &&
+        (this.peekToken(1) as { value: string }).value === "{"
+      ) {
+        const name = nameToken.parts.join("");
+        this.consume();
+        const body = this.parseStatement();
+        return { type: "CoprocClause", name, body };
+      }
+    }
+    const body = this.parseStatement();
+    return { type: "CoprocClause", body };
   }
 
   private parseCaseItemBody(): Statement[] {

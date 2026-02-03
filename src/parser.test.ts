@@ -4,9 +4,22 @@ import { parse } from "./index.js";
 type Literal = { type: "Literal"; value: string };
 type Word = { type: "Word"; parts: Literal[] };
 type Assignment = { type: "Assignment"; name: string; value?: Word };
+type RedirOp =
+  | ">"
+  | "<"
+  | ">>"
+  | ">|"
+  | ">&"
+  | "<&"
+  | "<>"
+  | "&>"
+  | "&>>"
+  | "<<<"
+  | "<<"
+  | "<<-";
 type Redirect = {
   type: "Redirect";
-  op: ">" | "<" | ">>";
+  op: RedirOp;
   fd?: string;
   target: Word;
 };
@@ -46,6 +59,13 @@ type FunctionDecl = { type: "FunctionDecl"; name: string; body: Statement[] };
 type CaseItem = { type: "CaseItem"; patterns: Word[]; body: Statement[] };
 type CaseClause = { type: "CaseClause"; word: Word; items: CaseItem[] };
 type TimeClause = { type: "TimeClause"; command: Statement };
+type TestClause = { type: "TestClause"; expr: Word[] };
+type ArithCmd = { type: "ArithCmd"; expr: string };
+type CoprocClause = {
+  type: "CoprocClause";
+  name?: string;
+  body: Statement;
+};
 type Pipeline = { type: "Pipeline"; commands: Statement[] };
 type Logical = {
   type: "Logical";
@@ -71,6 +91,9 @@ type Command =
   | FunctionDecl
   | CaseClause
   | TimeClause
+  | TestClause
+  | ArithCmd
+  | CoprocClause
   | Pipeline
   | Logical;
 
@@ -88,11 +111,7 @@ const assign = (name: string, value?: string): Assignment =>
   value === undefined
     ? { type: "Assignment", name }
     : { type: "Assignment", name, value: word(value) };
-const redirect = (
-  op: ">" | "<" | ">>",
-  target: string,
-  fd?: string,
-): Redirect =>
+const redirect = (op: RedirOp, target: string, fd?: string): Redirect =>
   fd === undefined
     ? { type: "Redirect", op, target: word(target) }
     : { type: "Redirect", op, target: word(target), fd };
@@ -151,6 +170,16 @@ const caseClause = (wordValue: string, items: CaseItem[]): CaseClause => ({
   word: word(wordValue),
   items,
 });
+const testClause = (...words: Word[]): TestClause => ({
+  type: "TestClause",
+  expr: words,
+});
+const arithCmd = (expr: string): ArithCmd => ({
+  type: "ArithCmd",
+  expr,
+});
+const coprocClause = (body: Statement, name?: string): CoprocClause =>
+  name ? { type: "CoprocClause", name, body } : { type: "CoprocClause", body };
 const timeClause = (command: Statement): TimeClause => ({
   type: "TimeClause",
   command,
@@ -532,6 +561,148 @@ describe("parse (phase 11: time)", () => {
   it("parses time clauses", () => {
     expect(parse("time foo")).toEqual({
       ast: program(stmt(timeClause(stmt(simple("foo"))))),
+    });
+  });
+});
+
+describe("parse (phase 12: extended redirects)", () => {
+  it("parses clobber redirect >|", () => {
+    expect(parse("foo >| bar")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect(">|", "bar")],
+        }),
+      ),
+    });
+  });
+
+  it("parses fd dup >&", () => {
+    expect(parse("foo >&2")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect(">&", "2")],
+        }),
+      ),
+    });
+  });
+
+  it("parses fd dup <&", () => {
+    expect(parse("foo <&3")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect("<&", "3")],
+        }),
+      ),
+    });
+  });
+
+  it("parses &> redirect", () => {
+    expect(parse("foo &>bar")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect("&>", "bar")],
+        }),
+      ),
+    });
+  });
+
+  it("parses &>> redirect", () => {
+    expect(parse("foo &>>bar")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect("&>>", "bar")],
+        }),
+      ),
+    });
+  });
+
+  it("parses here-string <<<", () => {
+    expect(parse("foo <<<bar")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect("<<<", "bar")],
+        }),
+      ),
+    });
+  });
+
+  it("parses <> redirect", () => {
+    expect(parse("foo <>bar")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect("<>", "bar")],
+        }),
+      ),
+    });
+  });
+
+  it("parses fd dup with explicit fd 2>&1", () => {
+    expect(parse("foo 2>&1")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect(">&", "1", "2")],
+        }),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 13: extended test)", () => {
+  it("parses [[ ]]", () => {
+    expect(parse("[[ -f foo ]]")).toEqual({
+      ast: program(stmt(testClause(word("-f"), word("foo")))),
+    });
+  });
+
+  it("parses [[ with binary op ]]", () => {
+    expect(parse("[[ foo == bar ]]")).toEqual({
+      ast: program(stmt(testClause(word("foo"), word("=="), word("bar")))),
+    });
+  });
+});
+
+describe("parse (phase 14: arithmetic command)", () => {
+  it("parses (( ))", () => {
+    expect(parse("(( x + 1 ))")).toEqual({
+      ast: program(stmt(arithCmd("x + 1"))),
+    });
+  });
+
+  it("parses nested parens in (( ))", () => {
+    expect(parse("(( (x + 1) * 2 ))")).toEqual({
+      ast: program(stmt(arithCmd("(x + 1) * 2"))),
+    });
+  });
+});
+
+describe("parse (phase 15: coproc)", () => {
+  it("parses coproc with command", () => {
+    expect(parse("coproc foo")).toEqual({
+      ast: program(stmt(coprocClause(stmt(simple("foo"))))),
+    });
+  });
+
+  it("parses coproc with name and block", () => {
+    expect(parse("coproc NAME { foo; }")).toEqual({
+      ast: program(
+        stmt(coprocClause(stmt(block(stmt(simple("foo")))), "NAME")),
+      ),
     });
   });
 });
