@@ -36,6 +36,12 @@ type ForClause = {
   items?: Word[];
   body: Statement[];
 };
+type SelectClause = {
+  type: "SelectClause";
+  name: string;
+  items?: Word[];
+  body: Statement[];
+};
 type FunctionDecl = { type: "FunctionDecl"; name: string; body: Statement[] };
 type CaseItem = { type: "CaseItem"; patterns: Word[]; body: Statement[] };
 type CaseClause = { type: "CaseClause"; word: Word; items: CaseItem[] };
@@ -60,6 +66,7 @@ type Command =
   | IfClause
   | WhileClause
   | ForClause
+  | SelectClause
   | FunctionDecl
   | CaseClause
   | Pipeline
@@ -119,6 +126,14 @@ const forClause = (
   items
     ? { type: "ForClause", name, items, body }
     : { type: "ForClause", name, body };
+const selectClause = (
+  name: string,
+  body: Statement[],
+  items?: Word[],
+): SelectClause =>
+  items
+    ? { type: "SelectClause", name, items, body }
+    : { type: "SelectClause", name, body };
 const functionDecl = (name: string, body: Statement[]): FunctionDecl => ({
   type: "FunctionDecl",
   name,
@@ -448,7 +463,17 @@ describe("parse (phase 7: for clauses)", () => {
   });
 });
 
-describe("parse (phase 8: functions and case)", () => {
+describe("parse (phase 8: select clauses)", () => {
+  it("parses select loops", () => {
+    expect(parse("select i in a b; do c; done")).toEqual({
+      ast: program(
+        stmt(selectClause("i", [stmt(simple("c"))], [word("a"), word("b")])),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 9: functions and case)", () => {
   it("parses function declarations", () => {
     expect(parse("foo() { bar; }")).toEqual({
       ast: program(stmt(functionDecl("foo", [stmt(simple("bar"))]))),
@@ -478,7 +503,7 @@ describe("parse (phase 8: functions and case)", () => {
   });
 });
 
-describe("parse (phase 9: negation)", () => {
+describe("parse (phase 10: negation)", () => {
   it("parses negated commands", () => {
     expect(parse("! foo")).toEqual({
       ast: program(stmt(simple("foo"), false, true)),
