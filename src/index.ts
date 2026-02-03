@@ -617,12 +617,20 @@ class Parser {
     this.skipSeparators();
     while (!this.matchKeyword("esac")) {
       const patterns: Word[] = [];
-      while (this.matchWord() && !this.matchSymbol(")")) {
-        const patternToken = this.consume();
-        if (patternToken.type !== "word") {
-          throw new Error("Expected case pattern");
+      while (!this.matchSymbol(")")) {
+        if (this.matchWord()) {
+          const patternToken = this.consume();
+          if (patternToken.type !== "word") {
+            throw new Error("Expected case pattern");
+          }
+          patterns.push(this.wordFromParts(patternToken.parts));
+          continue;
         }
-        patterns.push(this.wordFromParts(patternToken.parts));
+        if (this.matchOp("|")) {
+          this.consume();
+          continue;
+        }
+        throw new Error("Expected case pattern or )");
       }
       this.consumeSymbol(")");
       const body = this.parseCaseItemBody();
