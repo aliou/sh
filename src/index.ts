@@ -78,6 +78,7 @@ export type Statement = {
   type: "Statement";
   command: Command;
   background?: boolean;
+  negated?: boolean;
 };
 export type Program = { type: "Program"; body: Statement[] };
 
@@ -85,7 +86,7 @@ export type ParseResult = {
   ast: Program;
 };
 
-type OpTokenValue = "&&" | "||" | "|" | ";" | "&";
+type OpTokenValue = "&&" | "||" | "|" | ";" | "&" | "!";
 
 type SymbolTokenValue = "(" | ")" | "{" | "}";
 
@@ -152,6 +153,13 @@ function tokenize(source: string): Token[] {
       while (i < source.length && source.charAt(i) !== "\n") {
         i += 1;
       }
+      continue;
+    }
+
+    if (ch === "!" && atBoundary) {
+      tokens.push({ type: "op", value: "!" });
+      atBoundary = true;
+      i += 1;
       continue;
     }
 
@@ -354,15 +362,25 @@ class Parser {
   }
 
   private parseStatement(): Statement {
+    let negated = false;
+    if (this.matchOp("!")) {
+      this.consume();
+      negated = true;
+    }
     const command = this.parseLogical();
     let background = false;
     if (this.matchOp("&")) {
       this.consume();
       background = true;
     }
-    return background
-      ? { type: "Statement", command, background }
-      : { type: "Statement", command };
+    const statement: Statement = { type: "Statement", command };
+    if (background) {
+      statement.background = true;
+    }
+    if (negated) {
+      statement.negated = true;
+    }
+    return statement;
   }
 
   private parseLogical(): Command {
@@ -459,13 +477,53 @@ class Parser {
     this.consumeKeyword("if");
     const cond = this.parseStatementsUntilKeyword(["then"]);
     this.consumeKeyword("then");
-    const thenBranch = this.parseStatementsUntilKeyword(["else", "fi"]);
+    const thenBranch = this.parseStatementsUntilKeyword(["else", "elif", "fi"]);
     let elseBranch: Statement[] | undefined;
-    if (this.matchKeyword("else")) {
+    if (this.matchKeyword("elif")) {
+      elseBranch = [
+        {
+          type: "Statement",
+          command: this.parseElifClause(),
+        },
+      ];
+    } else if (this.matchKeyword("else")) {
       this.consumeKeyword("else");
       elseBranch = this.parseStatementsUntilKeyword(["fi"]);
     }
     this.consumeKeyword("fi");
+    return elseBranch
+      ? {
+          type: "IfClause",
+          cond,
+          // biome-ignore lint/suspicious/noThenProperty: shell AST field
+          then: thenBranch,
+          else: elseBranch,
+        }
+      : {
+          type: "IfClause",
+          cond,
+          // biome-ignore lint/suspicious/noThenProperty: shell AST field
+          then: thenBranch,
+        };
+  }
+
+  private parseElifClause(): IfClause {
+    this.consumeKeyword("elif");
+    const cond = this.parseStatementsUntilKeyword(["then"]);
+    this.consumeKeyword("then");
+    const thenBranch = this.parseStatementsUntilKeyword(["else", "elif", "fi"]);
+    let elseBranch: Statement[] | undefined;
+    if (this.matchKeyword("elif")) {
+      elseBranch = [
+        {
+          type: "Statement",
+          command: this.parseElifClause(),
+        },
+      ];
+    } else if (this.matchKeyword("else")) {
+      this.consumeKeyword("else");
+      elseBranch = this.parseStatementsUntilKeyword(["fi"]);
+    }
     return elseBranch
       ? {
           type: "IfClause",
