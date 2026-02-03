@@ -21,6 +21,10 @@ type Command = SimpleCommand | Pipeline | Logical;
 
 const lit = (value: string): Literal => ({ type: "Literal", value });
 const word = (value: string): Word => ({ type: "Word", parts: [lit(value)] });
+const wordParts = (...parts: string[]): Word => ({
+  type: "Word",
+  parts: parts.map(lit),
+});
 const simple = (...words: string[]): SimpleCommand => ({
   type: "SimpleCommand",
   words: words.map(word),
@@ -89,6 +93,52 @@ describe("parse (phase 1: simple commands)", () => {
   it("parses background commands", () => {
     expect(parse("foo &\nbar")).toEqual({
       ast: program(stmt(simple("foo"), true), stmt(simple("bar"))),
+    });
+  });
+});
+
+describe("parse (phase 2: words, quotes, comments)", () => {
+  it("ignores full-line and trailing comments", () => {
+    expect(parse("# foo\nbar")).toEqual({
+      ast: program(stmt(simple("bar"))),
+    });
+
+    expect(parse("foo # bar")).toEqual({
+      ast: program(stmt(simple("foo"))),
+    });
+  });
+
+  it("keeps # when not at a boundary", () => {
+    expect(parse("foo#bar")).toEqual({
+      ast: program(stmt(simple("foo#bar"))),
+    });
+  });
+
+  it("parses single-quoted parts as literals", () => {
+    expect(parse("foo'bar'")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [wordParts("foo", "bar")],
+        }),
+      ),
+    });
+  });
+
+  it("parses double-quoted parts as literals", () => {
+    expect(parse('"foo bar"')).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo bar")],
+        }),
+      ),
+    });
+  });
+
+  it("treats backslash-newline as whitespace", () => {
+    expect(parse("foo \\\n bar")).toEqual({
+      ast: program(stmt(simple("foo", "bar"))),
     });
   });
 });
