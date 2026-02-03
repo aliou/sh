@@ -16,6 +16,8 @@ type SimpleCommand = {
   assignments?: Assignment[];
   redirects?: Redirect[];
 };
+type Subshell = { type: "Subshell"; body: Statement[] };
+type Block = { type: "Block"; body: Statement[] };
 type Pipeline = { type: "Pipeline"; commands: Statement[] };
 type Logical = {
   type: "Logical";
@@ -29,7 +31,7 @@ type Statement = {
   background?: boolean;
 };
 type Program = { type: "Program"; body: Statement[] };
-type Command = SimpleCommand | Pipeline | Logical;
+type Command = SimpleCommand | Subshell | Block | Pipeline | Logical;
 
 const lit = (value: string): Literal => ({ type: "Literal", value });
 const word = (value: string): Word => ({ type: "Word", parts: [lit(value)] });
@@ -53,6 +55,14 @@ const redirect = (
   fd === undefined
     ? { type: "Redirect", op, target: word(target) }
     : { type: "Redirect", op, target: word(target), fd };
+const subshell = (...body: Statement[]): Subshell => ({
+  type: "Subshell",
+  body,
+});
+const block = (...body: Statement[]): Block => ({
+  type: "Block",
+  body,
+});
 const stmt = (command: Command, background = false): Statement =>
   background
     ? { type: "Statement", command, background }
@@ -267,6 +277,24 @@ describe("parse (phase 3: assignments and redirects)", () => {
           redirects: [redirect(">", "out", "2")],
         }),
       ),
+    });
+  });
+});
+
+describe("parse (phase 4: subshells and blocks)", () => {
+  it("parses subshells", () => {
+    expect(parse("(foo)")).toEqual({
+      ast: program(stmt(subshell(stmt(simple("foo"))))),
+    });
+
+    expect(parse("(foo; bar)")).toEqual({
+      ast: program(stmt(subshell(stmt(simple("foo")), stmt(simple("bar"))))),
+    });
+  });
+
+  it("parses blocks", () => {
+    expect(parse("{ foo; }")).toEqual({
+      ast: program(stmt(block(stmt(simple("foo"))))),
     });
   });
 });
