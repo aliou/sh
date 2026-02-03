@@ -18,6 +18,12 @@ type SimpleCommand = {
 };
 type Subshell = { type: "Subshell"; body: Statement[] };
 type Block = { type: "Block"; body: Statement[] };
+type IfClause = {
+  type: "IfClause";
+  cond: Statement[];
+  then: Statement[];
+  else?: Statement[];
+};
 type Pipeline = { type: "Pipeline"; commands: Statement[] };
 type Logical = {
   type: "Logical";
@@ -31,7 +37,7 @@ type Statement = {
   background?: boolean;
 };
 type Program = { type: "Program"; body: Statement[] };
-type Command = SimpleCommand | Subshell | Block | Pipeline | Logical;
+type Command = SimpleCommand | Subshell | Block | IfClause | Pipeline | Logical;
 
 const lit = (value: string): Literal => ({ type: "Literal", value });
 const word = (value: string): Word => ({ type: "Word", parts: [lit(value)] });
@@ -63,6 +69,14 @@ const block = (...body: Statement[]): Block => ({
   type: "Block",
   body,
 });
+const ifClause = (
+  cond: Statement[],
+  then: Statement[],
+  elseBranch?: Statement[],
+): IfClause =>
+  elseBranch
+    ? { type: "IfClause", cond, then, else: elseBranch }
+    : { type: "IfClause", cond, then };
 const stmt = (command: Command, background = false): Statement =>
   background
     ? { type: "Statement", command, background }
@@ -295,6 +309,28 @@ describe("parse (phase 4: subshells and blocks)", () => {
   it("parses blocks", () => {
     expect(parse("{ foo; }")).toEqual({
       ast: program(stmt(block(stmt(simple("foo"))))),
+    });
+  });
+});
+
+describe("parse (phase 5: if clauses)", () => {
+  it("parses if/then/fi", () => {
+    expect(parse("if a; then b; fi")).toEqual({
+      ast: program(stmt(ifClause([stmt(simple("a"))], [stmt(simple("b"))]))),
+    });
+  });
+
+  it("parses if/then/else/fi", () => {
+    expect(parse("if a; then b; else c; fi")).toEqual({
+      ast: program(
+        stmt(
+          ifClause(
+            [stmt(simple("a"))],
+            [stmt(simple("b"))],
+            [stmt(simple("c"))],
+          ),
+        ),
+      ),
     });
   });
 });
