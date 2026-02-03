@@ -21,6 +21,8 @@ export type SimpleCommand = {
   assignments?: Assignment[];
   redirects?: Redirect[];
 };
+export type Subshell = { type: "Subshell"; body: Statement[] };
+export type Block = { type: "Block"; body: Statement[] };
 export type Pipeline = { type: "Pipeline"; commands: Statement[] };
 export type Logical = {
   type: "Logical";
@@ -28,7 +30,7 @@ export type Logical = {
   left: Statement;
   right: Statement;
 };
-export type Command = SimpleCommand | Pipeline | Logical;
+export type Command = SimpleCommand | Subshell | Block | Pipeline | Logical;
 export type Statement = {
   type: "Statement";
   command: Command;
@@ -42,10 +44,13 @@ export type ParseResult = {
 
 type OpTokenValue = "&&" | "||" | "|" | ";" | "&";
 
+type SymbolTokenValue = "(" | ")" | "{" | "}";
+
 type Token =
   | { type: "word"; parts: string[] }
   | { type: "op"; value: OpTokenValue }
-  | { type: "redir"; op: ">" | "<" | ">>"; fd?: string };
+  | { type: "redir"; op: ">" | "<" | ">>"; fd?: string }
+  | { type: "symbol"; value: SymbolTokenValue };
 
 export function parse(
   source: string,
@@ -60,6 +65,7 @@ export function parse(
 
 const operatorChars = new Set([";", "|", "&"]);
 const redirChars = new Set([">", "<"]);
+const symbolChars = new Set(["(", ")", "{", "}"]);
 
 const isDigit = (value: string) => value >= "0" && value <= "9";
 
@@ -138,6 +144,13 @@ function tokenize(source: string): Token[] {
       continue;
     }
 
+    if (symbolChars.has(ch)) {
+      tokens.push({ type: "symbol", value: ch as SymbolTokenValue });
+      atBoundary = true;
+      i += 1;
+      continue;
+    }
+
     if (source.startsWith("&&", i)) {
       tokens.push({ type: "op", value: "&&" });
       atBoundary = true;
@@ -183,7 +196,8 @@ function tokenize(source: string): Token[] {
         currentChar === "\r" ||
         currentChar === "\n" ||
         operatorChars.has(currentChar) ||
-        redirChars.has(currentChar)
+        redirChars.has(currentChar) ||
+        symbolChars.has(currentChar)
       ) {
         break;
       }
@@ -288,7 +302,9 @@ class Parser {
           ? token.value
           : token.type === "redir"
             ? token.op
-            : token.parts.join("")
+            : token.type === "symbol"
+              ? token.value
+              : token.parts.join("")
         : "";
       throw new Error(`Unexpected token: ${display}`);
     }
@@ -325,7 +341,7 @@ class Parser {
   }
 
   private parsePipeline(): Command {
-    const first = this.parseSimpleCommand();
+    const first = this.parseCommandAtom();
     if (!this.matchOp("|")) {
       return first;
     }
@@ -333,10 +349,49 @@ class Parser {
     const commands: Statement[] = [{ type: "Statement", command: first }];
     while (this.matchOp("|")) {
       this.consume();
-      const next = this.parseSimpleCommand();
+      const next = this.parseCommandAtom();
       commands.push({ type: "Statement", command: next });
     }
     return { type: "Pipeline", commands };
+  }
+
+  private parseCommandAtom(): Command {
+    if (this.matchSymbol("(")) {
+      return this.parseSubshell();
+    }
+    if (this.matchSymbol("{")) {
+      return this.parseBlock();
+    }
+    return this.parseSimpleCommand();
+  }
+
+  private parseSubshell(): Subshell {
+    this.consumeSymbol("(");
+    const body = this.parseStatementList(")");
+    this.consumeSymbol(")");
+    return { type: "Subshell", body };
+  }
+
+  private parseBlock(): Block {
+    this.consumeSymbol("{");
+    const body = this.parseStatementList("}");
+    this.consumeSymbol("}");
+    return { type: "Block", body };
+  }
+
+  private parseStatementList(endSymbol: SymbolTokenValue): Statement[] {
+    const body: Statement[] = [];
+    this.skipSeparators();
+    while (!this.matchSymbol(endSymbol)) {
+      if (this.isEof()) {
+        throw new Error(
+          `Unexpected end of input while looking for ${endSymbol}`,
+        );
+      }
+      body.push(this.parseStatement());
+      this.skipSeparators();
+    }
+    return body;
   }
 
   private parseSimpleCommand(): SimpleCommand {
@@ -449,6 +504,18 @@ class Parser {
 
   private matchRedir() {
     return this.peek()?.type === "redir";
+  }
+
+  private matchSymbol(value: SymbolTokenValue) {
+    const token = this.peek();
+    return token?.type === "symbol" && token.value === value;
+  }
+
+  private consumeSymbol(value: SymbolTokenValue) {
+    const token = this.consume();
+    if (token.type !== "symbol" || token.value !== value) {
+      throw new Error(`Expected symbol ${value}`);
+    }
   }
 
   private consume(): Token {
