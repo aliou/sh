@@ -24,6 +24,12 @@ type IfClause = {
   then: Statement[];
   else?: Statement[];
 };
+type WhileClause = {
+  type: "WhileClause";
+  cond: Statement[];
+  body: Statement[];
+  until?: boolean;
+};
 type Pipeline = { type: "Pipeline"; commands: Statement[] };
 type Logical = {
   type: "Logical";
@@ -37,7 +43,14 @@ type Statement = {
   background?: boolean;
 };
 type Program = { type: "Program"; body: Statement[] };
-type Command = SimpleCommand | Subshell | Block | IfClause | Pipeline | Logical;
+type Command =
+  | SimpleCommand
+  | Subshell
+  | Block
+  | IfClause
+  | WhileClause
+  | Pipeline
+  | Logical;
 
 const lit = (value: string): Literal => ({ type: "Literal", value });
 const word = (value: string): Word => ({ type: "Word", parts: [lit(value)] });
@@ -77,6 +90,14 @@ const ifClause = (
   elseBranch
     ? { type: "IfClause", cond, then, else: elseBranch }
     : { type: "IfClause", cond, then };
+const whileClause = (
+  cond: Statement[],
+  body: Statement[],
+  until?: boolean,
+): WhileClause =>
+  until
+    ? { type: "WhileClause", cond, body, until }
+    : { type: "WhileClause", cond, body };
 const stmt = (command: Command, background = false): Statement =>
   background
     ? { type: "Statement", command, background }
@@ -330,6 +351,22 @@ describe("parse (phase 5: if clauses)", () => {
             [stmt(simple("c"))],
           ),
         ),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 6: while/until clauses)", () => {
+  it("parses while/do/done", () => {
+    expect(parse("while a; do b; done")).toEqual({
+      ast: program(stmt(whileClause([stmt(simple("a"))], [stmt(simple("b"))]))),
+    });
+  });
+
+  it("parses until/do/done", () => {
+    expect(parse("until a; do b; done")).toEqual({
+      ast: program(
+        stmt(whileClause([stmt(simple("a"))], [stmt(simple("b"))], true)),
       ),
     });
   });
