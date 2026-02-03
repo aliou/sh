@@ -7,7 +7,31 @@ export type ParseOptions = {
 };
 
 export type Literal = { type: "Literal"; value: string };
-export type Word = { type: "Word"; parts: Literal[] };
+export type SglQuoted = { type: "SglQuoted"; value: string };
+export type DblQuoted = { type: "DblQuoted"; parts: WordPart[] };
+export type ParamExp = {
+  type: "ParamExp";
+  short: boolean;
+  param: Literal;
+  op?: string;
+  value?: Word;
+};
+export type CmdSubst = { type: "CmdSubst"; stmts: Statement[] };
+export type ArithExp = { type: "ArithExp"; expr: string };
+export type ProcSubst = {
+  type: "ProcSubst";
+  op: "<" | ">";
+  stmts: Statement[];
+};
+export type WordPart =
+  | Literal
+  | SglQuoted
+  | DblQuoted
+  | ParamExp
+  | CmdSubst
+  | ArithExp
+  | ProcSubst;
+export type Word = { type: "Word"; parts: WordPart[] };
 export type Assignment = { type: "Assignment"; name: string; value?: Word };
 export type RedirOp =
   | ">"
@@ -122,8 +146,24 @@ type OpTokenValue = "&&" | "||" | "|" | ";" | "&" | "!";
 
 type SymbolTokenValue = "(" | ")" | "{" | "}";
 
+type TokenWordPart =
+  | { type: "lit"; value: string }
+  | { type: "sgl"; value: string }
+  | { type: "dbl"; parts: TokenWordPart[] }
+  | {
+      type: "param";
+      name: string;
+      braced: boolean;
+      op?: string;
+      value?: string;
+    }
+  | { type: "cmd-subst"; raw: string }
+  | { type: "arith-exp"; raw: string }
+  | { type: "proc-subst"; op: "<" | ">"; raw: string }
+  | { type: "backtick"; raw: string };
+
 type Token =
-  | { type: "word"; parts: string[] }
+  | { type: "word"; parts: TokenWordPart[] }
   | { type: "op"; value: OpTokenValue }
   | { type: "redir"; op: RedirOp; fd?: string }
   | { type: "symbol"; value: SymbolTokenValue }
@@ -145,6 +185,143 @@ const redirChars = new Set([">", "<"]);
 const symbolChars = new Set(["(", ")", "{", "}"]);
 
 const isDigit = (value: string) => value >= "0" && value <= "9";
+
+const isNameChar = (c: string) =>
+  (c >= "a" && c <= "z") ||
+  (c >= "A" && c <= "Z") ||
+  (c >= "0" && c <= "9") ||
+  c === "_";
+
+const isNameStart = (c: string) =>
+  (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_";
+
+const specialParams = new Set(["@", "*", "#", "?", "-", "$", "!"]);
+
+function scanExpansion(
+  source: string,
+  pos: number,
+): { part: TokenWordPart; end: number } | null {
+  if (source.charAt(pos) !== "$") return null;
+  const next = source.charAt(pos + 1);
+
+  // $((expr)) arithmetic expansion
+  if (next === "(" && source.charAt(pos + 2) === "(") {
+    let j = pos + 3;
+    let depth = 0;
+    while (j < source.length) {
+      if (
+        source.charAt(j) === ")" &&
+        source.charAt(j + 1) === ")" &&
+        depth === 0
+      )
+        break;
+      if (source.charAt(j) === "(") depth++;
+      if (source.charAt(j) === ")") depth--;
+      j++;
+    }
+    const expr = source.slice(pos + 3, j).trim();
+    return { part: { type: "arith-exp", raw: expr }, end: j + 2 };
+  }
+
+  // $(cmd) command substitution
+  if (next === "(") {
+    let j = pos + 2;
+    let depth = 1;
+    while (j < source.length && depth > 0) {
+      if (source.charAt(j) === "(") depth++;
+      if (source.charAt(j) === ")") depth--;
+      j++;
+    }
+    const raw = source.slice(pos + 2, j - 1);
+    return { part: { type: "cmd-subst", raw }, end: j };
+  }
+
+  // ${...} braced parameter expansion
+  if (next === "{") {
+    let j = pos + 2;
+    let depth = 1;
+    while (j < source.length && depth > 0) {
+      if (source.charAt(j) === "{") depth++;
+      if (source.charAt(j) === "}") depth--;
+      j++;
+    }
+    const inner = source.slice(pos + 2, j - 1);
+    // Parse inner: name then optional op and value
+    let nameEnd = 0;
+    // Skip optional ! # prefix
+    let prefix = "";
+    if (inner.charAt(0) === "!" || inner.charAt(0) === "#") {
+      prefix = inner.charAt(0);
+      nameEnd = 1;
+    }
+    while (nameEnd < inner.length && isNameChar(inner.charAt(nameEnd))) {
+      nameEnd++;
+    }
+    const name = inner.slice(prefix ? 1 : 0, nameEnd);
+    const rest = inner.slice(nameEnd);
+    if (rest.length > 0) {
+      // Try to extract operator and value
+      const opMatch = rest.match(
+        /^(:-|:=|:\+|:\?|-|\+|=|\?|##|%%|#|%|\/\/|\/)/,
+      );
+      if (opMatch) {
+        const op = opMatch[0];
+        const value = rest.slice(op.length);
+        return {
+          part: { type: "param", name, braced: true, op, value },
+          end: j,
+        };
+      }
+      // Slice or other complex syntax - store as name with rest
+      return {
+        part: {
+          type: "param",
+          name: inner,
+          braced: true,
+        },
+        end: j,
+      };
+    }
+    return { part: { type: "param", name, braced: true }, end: j };
+  }
+
+  // $name or $N or $@ etc
+  if (isNameStart(next)) {
+    let j = pos + 2;
+    while (j < source.length && isNameChar(source.charAt(j))) {
+      j++;
+    }
+    const name = source.slice(pos + 1, j);
+    return { part: { type: "param", name, braced: false }, end: j };
+  }
+  if (isDigit(next)) {
+    return {
+      part: { type: "param", name: next, braced: false },
+      end: pos + 2,
+    };
+  }
+  if (specialParams.has(next)) {
+    return {
+      part: { type: "param", name: next, braced: false },
+      end: pos + 2,
+    };
+  }
+
+  return null;
+}
+
+function scanBacktick(
+  source: string,
+  pos: number,
+): { part: TokenWordPart; end: number } {
+  let j = pos + 1;
+  while (j < source.length && source.charAt(j) !== "`") {
+    if (source.charAt(j) === "\\") j++;
+    j++;
+  }
+  const raw = source.slice(pos + 1, j);
+  return { part: { type: "backtick", raw }, end: j + 1 };
+}
 
 function tryRedirOp(
   source: string,
@@ -283,8 +460,15 @@ function tokenize(source: string): Token[] {
       continue;
     }
 
-    const parts: string[] = [];
+    const parts: TokenWordPart[] = [];
     let current = "";
+
+    const flushLit = () => {
+      if (current.length > 0) {
+        parts.push({ type: "lit", value: current });
+        current = "";
+      }
+    };
 
     while (i < source.length) {
       const currentChar = source.charAt(i);
@@ -314,10 +498,7 @@ function tokenize(source: string): Token[] {
       }
 
       if (currentChar === "'") {
-        if (current.length > 0) {
-          parts.push(current);
-          current = "";
-        }
+        flushLit();
         i += 1;
         const start = i;
         while (i < source.length && source.charAt(i) !== "'") {
@@ -326,18 +507,22 @@ function tokenize(source: string): Token[] {
         if (i >= source.length) {
           throw new Error("Unclosed single quote");
         }
-        parts.push(source.slice(start, i));
+        parts.push({ type: "sgl", value: source.slice(start, i) });
         i += 1;
         continue;
       }
 
       if (currentChar === '"') {
-        if (current.length > 0) {
-          parts.push(current);
-          current = "";
-        }
+        flushLit();
         i += 1;
-        let buffer = "";
+        const dblParts: TokenWordPart[] = [];
+        let dblBuf = "";
+        const flushDblLit = () => {
+          if (dblBuf.length > 0) {
+            dblParts.push({ type: "lit", value: dblBuf });
+            dblBuf = "";
+          }
+        };
         let closed = false;
         while (i < source.length) {
           const dqChar = source.charAt(i);
@@ -352,8 +537,27 @@ function tokenize(source: string): Token[] {
             }
           }
           if (dqChar === "\\" && i + 1 < source.length) {
-            buffer += dqChar + source.charAt(i + 1);
+            dblBuf += dqChar + source.charAt(i + 1);
             i += 2;
+            continue;
+          }
+          if (dqChar === "$") {
+            flushDblLit();
+            const exp = scanExpansion(source, i);
+            if (exp) {
+              dblParts.push(exp.part);
+              i = exp.end;
+              continue;
+            }
+            dblBuf += dqChar;
+            i += 1;
+            continue;
+          }
+          if (dqChar === "`") {
+            flushDblLit();
+            const bt = scanBacktick(source, i);
+            dblParts.push(bt.part);
+            i = bt.end;
             continue;
           }
           if (dqChar === '"') {
@@ -361,13 +565,35 @@ function tokenize(source: string): Token[] {
             closed = true;
             break;
           }
-          buffer += dqChar;
+          dblBuf += dqChar;
           i += 1;
         }
         if (!closed) {
           throw new Error("Unclosed double quote");
         }
-        parts.push(buffer);
+        flushDblLit();
+        parts.push({ type: "dbl", parts: dblParts });
+        continue;
+      }
+
+      if (currentChar === "$") {
+        flushLit();
+        const exp = scanExpansion(source, i);
+        if (exp) {
+          parts.push(exp.part);
+          i = exp.end;
+          continue;
+        }
+        current += currentChar;
+        i += 1;
+        continue;
+      }
+
+      if (currentChar === "`") {
+        flushLit();
+        const bt = scanBacktick(source, i);
+        parts.push(bt.part);
+        i = bt.end;
         continue;
       }
 
@@ -375,9 +601,7 @@ function tokenize(source: string): Token[] {
       i += 1;
     }
 
-    if (current.length > 0) {
-      parts.push(current);
-    }
+    flushLit();
 
     if (parts.length === 0) {
       throw new Error("Unexpected character");
@@ -388,6 +612,20 @@ function tokenize(source: string): Token[] {
   }
 
   return tokens;
+}
+
+function tokenPartsText(parts: TokenWordPart[]): string {
+  return parts
+    .map((p) => {
+      if (p.type === "lit") return p.value;
+      if (p.type === "sgl") return p.value;
+      if (p.type === "dbl")
+        return p.parts
+          .map((dp) => (dp.type === "lit" ? dp.value : ""))
+          .join("");
+      return "";
+    })
+    .join("");
 }
 
 class Parser {
@@ -417,7 +655,7 @@ class Parser {
               ? token.value
               : token.type === "arith-cmd"
                 ? "(( ... ))"
-                : token.parts.join("")
+                : tokenPartsText(token.parts)
         : "";
       throw new Error(`Unexpected token: ${display}`);
     }
@@ -634,7 +872,7 @@ class Parser {
     if (nameToken.type !== "word") {
       throw new Error("Expected loop variable name");
     }
-    const name = nameToken.parts.join("");
+    const name = tokenPartsText(nameToken.parts);
     let items: Word[] | undefined;
     if (this.matchKeyword("in")) {
       this.consumeKeyword("in");
@@ -668,7 +906,7 @@ class Parser {
     if (nameToken.type !== "word") {
       throw new Error("Expected select variable name");
     }
-    const name = nameToken.parts.join("");
+    const name = tokenPartsText(nameToken.parts);
     let items: Word[] | undefined;
     if (this.matchKeyword("in")) {
       this.consumeKeyword("in");
@@ -704,7 +942,7 @@ class Parser {
     if (nameToken.type !== "word") {
       throw new Error("Expected function name");
     }
-    const name = nameToken.parts.join("");
+    const name = tokenPartsText(nameToken.parts);
     if (this.matchSymbol("(")) {
       this.consumeSymbol("(");
       this.consumeSymbol(")");
@@ -795,7 +1033,7 @@ class Parser {
         this.peekToken(1)?.type === "symbol" &&
         (this.peekToken(1) as { value: string }).value === "{"
       ) {
-        const name = nameToken.parts.join("");
+        const name = tokenPartsText(nameToken.parts);
         this.consume();
         const body = this.parseStatement();
         return { type: "CoprocClause", name, body };
@@ -901,21 +1139,73 @@ class Parser {
     return command;
   }
 
-  private wordFromParts(parts: string[]): Word {
+  private convertWordPart(part: TokenWordPart): WordPart {
+    switch (part.type) {
+      case "lit":
+        return { type: "Literal", value: part.value };
+      case "sgl":
+        return { type: "SglQuoted", value: part.value };
+      case "dbl":
+        return {
+          type: "DblQuoted",
+          parts: part.parts.map((p) => this.convertWordPart(p)),
+        };
+      case "param": {
+        const paramExp: ParamExp = {
+          type: "ParamExp",
+          short: !part.braced,
+          param: { type: "Literal", value: part.name },
+        };
+        if (part.op) {
+          paramExp.op = part.op;
+        }
+        if (part.value !== undefined) {
+          paramExp.value = {
+            type: "Word",
+            parts: [{ type: "Literal", value: part.value }],
+          };
+        }
+        return paramExp;
+      }
+      case "cmd-subst": {
+        const innerTokens = tokenize(part.raw);
+        const innerParser = new Parser(innerTokens);
+        const prog = innerParser.parseProgram();
+        return { type: "CmdSubst", stmts: prog.body };
+      }
+      case "arith-exp":
+        return { type: "ArithExp", expr: part.raw };
+      case "proc-subst": {
+        const innerTokens = tokenize(part.raw);
+        const innerParser = new Parser(innerTokens);
+        const prog = innerParser.parseProgram();
+        return { type: "ProcSubst", op: part.op, stmts: prog.body };
+      }
+      case "backtick": {
+        const innerTokens = tokenize(part.raw);
+        const innerParser = new Parser(innerTokens);
+        const prog = innerParser.parseProgram();
+        return { type: "CmdSubst", stmts: prog.body };
+      }
+    }
+  }
+
+  private wordFromParts(parts: TokenWordPart[]): Word {
     return {
       type: "Word",
-      parts: parts.map((part) => ({ type: "Literal", value: part })),
+      parts: parts.map((part) => this.convertWordPart(part)),
     };
   }
 
-  private assignmentFromParts(parts: string[]): Assignment | undefined {
+  private assignmentFromParts(parts: TokenWordPart[]): Assignment | undefined {
     if (parts.length !== 1) {
       return undefined;
     }
-    const raw = parts[0];
-    if (!raw) {
+    const part = parts[0];
+    if (!part || part.type !== "lit") {
       return undefined;
     }
+    const raw = part.value;
     const eqIndex = raw.indexOf("=");
     if (eqIndex <= 0) {
       return undefined;
@@ -927,7 +1217,14 @@ class Parser {
     const value = raw.slice(eqIndex + 1);
     return value.length === 0
       ? { type: "Assignment", name }
-      : { type: "Assignment", name, value: this.wordFromParts([value]) };
+      : {
+          type: "Assignment",
+          name,
+          value: {
+            type: "Word",
+            parts: [{ type: "Literal", value }],
+          },
+        };
   }
 
   private skipSeparators() {
@@ -957,9 +1254,9 @@ class Parser {
 
   private matchKeyword(value: string) {
     const token = this.peek();
-    return token?.type === "word" && token.parts.length === 1
-      ? token.parts[0] === value
-      : false;
+    if (token?.type !== "word" || token.parts.length !== 1) return false;
+    const part = token.parts[0];
+    return part?.type === "lit" && part.value === value;
   }
 
   private matchKeywordIn(values: string[]) {
@@ -999,7 +1296,8 @@ class Parser {
     if (
       token.type !== "word" ||
       token.parts.length !== 1 ||
-      token.parts[0] !== value
+      token.parts[0]?.type !== "lit" ||
+      token.parts[0].value !== value
     ) {
       throw new Error(`Expected keyword ${value}`);
     }

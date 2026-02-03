@@ -2,7 +2,27 @@ import { describe, expect, it } from "vitest";
 import { parse } from "./index.js";
 
 type Literal = { type: "Literal"; value: string };
-type Word = { type: "Word"; parts: Literal[] };
+type SglQuoted = { type: "SglQuoted"; value: string };
+type DblQuoted = { type: "DblQuoted"; parts: WordPart[] };
+type ParamExp = {
+  type: "ParamExp";
+  short: boolean;
+  param: Literal;
+  op?: string;
+  value?: Word;
+};
+type CmdSubst = { type: "CmdSubst"; stmts: Statement[] };
+type ArithExp = { type: "ArithExp"; expr: string };
+type ProcSubst = { type: "ProcSubst"; op: "<" | ">"; stmts: Statement[] };
+type WordPart =
+  | Literal
+  | SglQuoted
+  | DblQuoted
+  | ParamExp
+  | CmdSubst
+  | ArithExp
+  | ProcSubst;
+type Word = { type: "Word"; parts: WordPart[] };
 type Assignment = { type: "Assignment"; name: string; value?: Word };
 type RedirOp =
   | ">"
@@ -98,10 +118,35 @@ type Command =
   | Logical;
 
 const lit = (value: string): Literal => ({ type: "Literal", value });
+const sgl = (value: string): SglQuoted => ({ type: "SglQuoted", value });
+const dbl = (...parts: WordPart[]): DblQuoted => ({
+  type: "DblQuoted",
+  parts,
+});
+const paramExp = (
+  name: string,
+  short = true,
+  op?: string,
+  value?: string,
+): ParamExp => {
+  const p: ParamExp = {
+    type: "ParamExp",
+    short,
+    param: lit(name),
+  };
+  if (op !== undefined) p.op = op;
+  if (value !== undefined) p.value = { type: "Word", parts: [lit(value)] };
+  return p;
+};
+const cmdSubst = (...stmts: Statement[]): CmdSubst => ({
+  type: "CmdSubst",
+  stmts,
+});
+const arithExp = (expr: string): ArithExp => ({ type: "ArithExp", expr });
 const word = (value: string): Word => ({ type: "Word", parts: [lit(value)] });
-const wordParts = (...parts: string[]): Word => ({
+const wordParts = (...parts: WordPart[]): Word => ({
   type: "Word",
-  parts: parts.map(lit),
+  parts,
 });
 const simple = (...words: string[]): SimpleCommand => ({
   type: "SimpleCommand",
@@ -324,23 +369,23 @@ describe("parse (phase 2: words, quotes, comments)", () => {
     });
   });
 
-  it("parses single-quoted parts as literals", () => {
+  it("parses single-quoted parts", () => {
     expect(parse("foo'bar'")).toEqual({
       ast: program(
         stmt({
           type: "SimpleCommand",
-          words: [wordParts("foo", "bar")],
+          words: [wordParts(lit("foo"), sgl("bar"))],
         }),
       ),
     });
   });
 
-  it("parses double-quoted parts as literals", () => {
+  it("parses double-quoted parts", () => {
     expect(parse('"foo bar"')).toEqual({
       ast: program(
         stmt({
           type: "SimpleCommand",
-          words: [word("foo bar")],
+          words: [wordParts(dbl(lit("foo bar")))],
         }),
       ),
     });
@@ -691,7 +736,112 @@ describe("parse (phase 14: arithmetic command)", () => {
   });
 });
 
-describe("parse (phase 15: coproc)", () => {
+describe("parse (phase 15: parameter expansion)", () => {
+  it("parses $var", () => {
+    expect(parse("echo $foo")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("echo"), wordParts(paramExp("foo"))],
+        }),
+      ),
+    });
+  });
+
+  it("parses ${var}", () => {
+    expect(parse("echo ${foo}")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("echo"), wordParts(paramExp("foo", false))],
+        }),
+      ),
+    });
+  });
+
+  it("parses ${var:-default}", () => {
+    expect(parse("echo ${foo:-bar}")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("echo"), wordParts(paramExp("foo", false, ":-", "bar"))],
+        }),
+      ),
+    });
+  });
+
+  it("parses $var inside double quotes", () => {
+    expect(parse('"hello $name"')).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [wordParts(dbl(lit("hello "), paramExp("name")))],
+        }),
+      ),
+    });
+  });
+
+  it("parses special params $? $# $@", () => {
+    expect(parse("echo $?")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("echo"), wordParts(paramExp("?"))],
+        }),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 16: command substitution)", () => {
+  it("parses $(cmd)", () => {
+    expect(parse("echo $(foo)")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("echo"), wordParts(cmdSubst(stmt(simple("foo"))))],
+        }),
+      ),
+    });
+  });
+
+  it("parses backtick substitution", () => {
+    expect(parse("echo `foo`")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("echo"), wordParts(cmdSubst(stmt(simple("foo"))))],
+        }),
+      ),
+    });
+  });
+
+  it("parses $(cmd) inside double quotes", () => {
+    expect(parse('"$(foo)"')).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [wordParts(dbl(cmdSubst(stmt(simple("foo")))))],
+        }),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 17: arithmetic expansion)", () => {
+  it("parses $((expr))", () => {
+    expect(parse("echo $((1 + 2))")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("echo"), wordParts(arithExp("1 + 2"))],
+        }),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 18: coproc)", () => {
   it("parses coproc with command", () => {
     expect(parse("coproc foo")).toEqual({
       ast: program(stmt(coprocClause(stmt(simple("foo"))))),
