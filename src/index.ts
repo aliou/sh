@@ -41,6 +41,21 @@ export type ForClause = {
   items?: Word[];
   body: Statement[];
 };
+export type FunctionDecl = {
+  type: "FunctionDecl";
+  name: string;
+  body: Statement[];
+};
+export type CaseItem = {
+  type: "CaseItem";
+  patterns: Word[];
+  body: Statement[];
+};
+export type CaseClause = {
+  type: "CaseClause";
+  word: Word;
+  items: CaseItem[];
+};
 export type Pipeline = { type: "Pipeline"; commands: Statement[] };
 export type Logical = {
   type: "Logical";
@@ -55,6 +70,8 @@ export type Command =
   | IfClause
   | WhileClause
   | ForClause
+  | FunctionDecl
+  | CaseClause
   | Pipeline
   | Logical;
 export type Statement = {
@@ -394,6 +411,12 @@ class Parser {
     if (this.matchKeyword("for")) {
       return this.parseForClause();
     }
+    if (this.matchKeyword("case")) {
+      return this.parseCaseClause();
+    }
+    if (this.matchKeyword("function") || this.looksLikeFuncDecl()) {
+      return this.parseFunctionDecl();
+    }
     if (this.matchSymbol("(")) {
       return this.parseSubshell();
     }
@@ -502,6 +525,72 @@ class Parser {
     return items
       ? { type: "ForClause", name, items, body }
       : { type: "ForClause", name, body };
+  }
+
+  private parseFunctionDecl(): FunctionDecl {
+    if (this.matchKeyword("function")) {
+      this.consumeKeyword("function");
+    }
+    const nameToken = this.consume();
+    if (nameToken.type !== "word") {
+      throw new Error("Expected function name");
+    }
+    const name = nameToken.parts.join("");
+    if (this.matchSymbol("(")) {
+      this.consumeSymbol("(");
+      this.consumeSymbol(")");
+    }
+    if (this.matchSymbol("{")) {
+      const body = this.parseBlock().body;
+      return { type: "FunctionDecl", name, body };
+    }
+    throw new Error("Expected function body block");
+  }
+
+  private parseCaseClause(): CaseClause {
+    this.consumeKeyword("case");
+    const wordToken = this.consume();
+    if (wordToken.type !== "word") {
+      throw new Error("Expected case word");
+    }
+    const word = this.wordFromParts(wordToken.parts);
+    this.consumeKeyword("in");
+    const items: CaseItem[] = [];
+    this.skipSeparators();
+    while (!this.matchKeyword("esac")) {
+      const patterns: Word[] = [];
+      while (this.matchWord() && !this.matchSymbol(")")) {
+        const patternToken = this.consume();
+        if (patternToken.type !== "word") {
+          throw new Error("Expected case pattern");
+        }
+        patterns.push(this.wordFromParts(patternToken.parts));
+      }
+      this.consumeSymbol(")");
+      const body = this.parseCaseItemBody();
+      items.push({ type: "CaseItem", patterns, body });
+      if (this.matchOp(";") && this.peekOp(";")) {
+        this.consume();
+        this.consume();
+      }
+      this.skipSeparators();
+    }
+    this.consumeKeyword("esac");
+    return { type: "CaseClause", word, items };
+  }
+
+  private parseCaseItemBody(): Statement[] {
+    const body: Statement[] = [];
+    this.skipSeparators();
+    while (!this.matchKeyword("esac") && !this.isCaseItemEnd()) {
+      body.push(this.parseStatement());
+      this.skipSeparators();
+    }
+    return body;
+  }
+
+  private isCaseItemEnd(): boolean {
+    return this.matchOp(";") && this.peekOp(";");
   }
 
   private parseStatementsUntilKeyword(endKeywords: string[]): Statement[] {
@@ -642,6 +731,22 @@ class Parser {
     return values.some((value) => this.matchKeyword(value));
   }
 
+  private looksLikeFuncDecl(): boolean {
+    const name = this.peek();
+    const next = this.peekToken(1);
+    const nextNext = this.peekToken(2);
+    const after = this.peekToken(3);
+    return (
+      name?.type === "word" &&
+      next?.type === "symbol" &&
+      next.value === "(" &&
+      nextNext?.type === "symbol" &&
+      nextNext.value === ")" &&
+      after?.type === "symbol" &&
+      after.value === "{"
+    );
+  }
+
   private matchSymbol(value: SymbolTokenValue) {
     const token = this.peek();
     return token?.type === "symbol" && token.value === value;
@@ -679,6 +784,15 @@ class Parser {
 
   private peek(): Token | undefined {
     return this.tokens[this.index];
+  }
+
+  private peekToken(offset: number): Token | undefined {
+    return this.tokens[this.index + offset];
+  }
+
+  private peekOp(value: OpTokenValue): boolean {
+    const token = this.peekToken(1);
+    return token?.type === "op" && token.value === value;
   }
 
   private isEof() {
