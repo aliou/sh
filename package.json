@@ -28,6 +28,7 @@
     "build:js": "rolldown -c",
     "build:types": "tsc -p tsconfig.build.json",
     "build": "pnpm build:js && pnpm build:types",
+    "prepack": "pnpm build",
     "prepare": "husky install"
   },
   "lint-staged": {
