@@ -62,6 +62,7 @@ export type CaseClause = {
   word: Word;
   items: CaseItem[];
 };
+export type TimeClause = { type: "TimeClause"; command: Statement };
 export type Pipeline = { type: "Pipeline"; commands: Statement[] };
 export type Logical = {
   type: "Logical";
@@ -79,6 +80,7 @@ export type Command =
   | SelectClause
   | FunctionDecl
   | CaseClause
+  | TimeClause
   | Pipeline
   | Logical;
 export type Statement = {
@@ -442,6 +444,9 @@ class Parser {
     if (this.matchKeyword("case")) {
       return this.parseCaseClause();
     }
+    if (this.matchKeyword("time")) {
+      return this.parseTimeClause();
+    }
     if (this.matchKeyword("function") || this.looksLikeFuncDecl()) {
       return this.parseFunctionDecl();
     }
@@ -687,6 +692,12 @@ class Parser {
     }
     this.consumeKeyword("esac");
     return { type: "CaseClause", word, items };
+  }
+
+  private parseTimeClause(): TimeClause {
+    this.consumeKeyword("time");
+    const command = this.parseStatement();
+    return { type: "TimeClause", command };
   }
 
   private parseCaseItemBody(): Statement[] {
