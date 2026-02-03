@@ -30,6 +30,12 @@ type WhileClause = {
   body: Statement[];
   until?: boolean;
 };
+type ForClause = {
+  type: "ForClause";
+  name: string;
+  items?: Word[];
+  body: Statement[];
+};
 type Pipeline = { type: "Pipeline"; commands: Statement[] };
 type Logical = {
   type: "Logical";
@@ -49,6 +55,7 @@ type Command =
   | Block
   | IfClause
   | WhileClause
+  | ForClause
   | Pipeline
   | Logical;
 
@@ -98,6 +105,14 @@ const whileClause = (
   until
     ? { type: "WhileClause", cond, body, until }
     : { type: "WhileClause", cond, body };
+const forClause = (
+  name: string,
+  body: Statement[],
+  items?: Word[],
+): ForClause =>
+  items
+    ? { type: "ForClause", name, items, body }
+    : { type: "ForClause", name, body };
 const stmt = (command: Command, background = false): Statement =>
   background
     ? { type: "Statement", command, background }
@@ -368,6 +383,22 @@ describe("parse (phase 6: while/until clauses)", () => {
       ast: program(
         stmt(whileClause([stmt(simple("a"))], [stmt(simple("b"))], true)),
       ),
+    });
+  });
+});
+
+describe("parse (phase 7: for clauses)", () => {
+  it("parses for-in loops", () => {
+    expect(parse("for i in a b; do c; done")).toEqual({
+      ast: program(
+        stmt(forClause("i", [stmt(simple("c"))], [word("a"), word("b")])),
+      ),
+    });
+  });
+
+  it("parses for loops without in list", () => {
+    expect(parse("for i; do c; done")).toEqual({
+      ast: program(stmt(forClause("i", [stmt(simple("c"))]))),
     });
   });
 });
