@@ -500,6 +500,17 @@ describe("parse (phase 9: functions and case)", () => {
         ),
       ),
     });
+
+    expect(parse("case x in a) y ;; b) z ;; esac")).toEqual({
+      ast: program(
+        stmt(
+          caseClause("x", [
+            caseItem([word("a")], [stmt(simple("y"))]),
+            caseItem([word("b")], [stmt(simple("z"))]),
+          ]),
+        ),
+      ),
+    });
   });
 });
 
