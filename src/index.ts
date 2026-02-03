@@ -29,6 +29,12 @@ export type IfClause = {
   then: Statement[];
   else?: Statement[];
 };
+export type WhileClause = {
+  type: "WhileClause";
+  cond: Statement[];
+  body: Statement[];
+  until?: boolean;
+};
 export type Pipeline = { type: "Pipeline"; commands: Statement[] };
 export type Logical = {
   type: "Logical";
@@ -41,6 +47,7 @@ export type Command =
   | Subshell
   | Block
   | IfClause
+  | WhileClause
   | Pipeline
   | Logical;
 export type Statement = {
@@ -371,6 +378,12 @@ class Parser {
     if (this.matchKeyword("if")) {
       return this.parseIfClause();
     }
+    if (this.matchKeyword("while")) {
+      return this.parseWhileClause(false);
+    }
+    if (this.matchKeyword("until")) {
+      return this.parseWhileClause(true);
+    }
     if (this.matchSymbol("(")) {
       return this.parseSubshell();
     }
@@ -434,6 +447,17 @@ class Parser {
           // biome-ignore lint/suspicious/noThenProperty: shell AST field
           then: thenBranch,
         };
+  }
+
+  private parseWhileClause(until: boolean): WhileClause {
+    this.consumeKeyword(until ? "until" : "while");
+    const cond = this.parseStatementsUntilKeyword(["do"]);
+    this.consumeKeyword("do");
+    const body = this.parseStatementsUntilKeyword(["done"]);
+    this.consumeKeyword("done");
+    return until
+      ? { type: "WhileClause", cond, body, until: true }
+      : { type: "WhileClause", cond, body };
   }
 
   private parseStatementsUntilKeyword(endKeywords: string[]): Statement[] {
