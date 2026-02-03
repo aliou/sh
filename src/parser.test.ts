@@ -907,7 +907,75 @@ describe("parse (phase 19: process substitution)", () => {
   });
 });
 
-describe("parse (phase 20: coproc)", () => {
+describe("parse (phase 20: mixed expansions)", () => {
+  it("parses mixed literal and expansion in word", () => {
+    expect(parse("echo foo${bar}baz")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [
+            word("echo"),
+            wordParts(lit("foo"), paramExp("bar", false), lit("baz")),
+          ],
+        }),
+      ),
+    });
+  });
+
+  it("parses nested command substitution", () => {
+    expect(parse("echo $(echo $(foo))")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [
+            word("echo"),
+            wordParts(
+              cmdSubst(
+                stmt({
+                  type: "SimpleCommand",
+                  words: [
+                    word("echo"),
+                    wordParts(cmdSubst(stmt(simple("foo")))),
+                  ],
+                }),
+              ),
+            ),
+          ],
+        }),
+      ),
+    });
+  });
+
+  it("parses function with parens in function keyword form", () => {
+    expect(parse("function foo() { bar; }")).toEqual({
+      ast: program(stmt(functionDecl("foo", [stmt(simple("bar"))]))),
+    });
+  });
+
+  it("parses if/elif/else/fi chain", () => {
+    expect(parse("if a; then b; elif c; then d; else e; fi")).toEqual({
+      ast: program(
+        stmt(
+          ifClause(
+            [stmt(simple("a"))],
+            [stmt(simple("b"))],
+            [
+              stmt(
+                ifClause(
+                  [stmt(simple("c"))],
+                  [stmt(simple("d"))],
+                  [stmt(simple("e"))],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 21: coproc)", () => {
   it("parses coproc with command", () => {
     expect(parse("coproc foo")).toEqual({
       ast: program(stmt(coprocClause(stmt(simple("foo"))))),
