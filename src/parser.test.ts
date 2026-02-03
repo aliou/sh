@@ -36,6 +36,9 @@ type ForClause = {
   items?: Word[];
   body: Statement[];
 };
+type FunctionDecl = { type: "FunctionDecl"; name: string; body: Statement[] };
+type CaseItem = { type: "CaseItem"; patterns: Word[]; body: Statement[] };
+type CaseClause = { type: "CaseClause"; word: Word; items: CaseItem[] };
 type Pipeline = { type: "Pipeline"; commands: Statement[] };
 type Logical = {
   type: "Logical";
@@ -56,6 +59,8 @@ type Command =
   | IfClause
   | WhileClause
   | ForClause
+  | FunctionDecl
+  | CaseClause
   | Pipeline
   | Logical;
 
@@ -113,6 +118,21 @@ const forClause = (
   items
     ? { type: "ForClause", name, items, body }
     : { type: "ForClause", name, body };
+const functionDecl = (name: string, body: Statement[]): FunctionDecl => ({
+  type: "FunctionDecl",
+  name,
+  body,
+});
+const caseItem = (patterns: Word[], body: Statement[]): CaseItem => ({
+  type: "CaseItem",
+  patterns,
+  body,
+});
+const caseClause = (wordValue: string, items: CaseItem[]): CaseClause => ({
+  type: "CaseClause",
+  word: word(wordValue),
+  items,
+});
 const stmt = (command: Command, background = false): Statement =>
   background
     ? { type: "Statement", command, background }
@@ -399,6 +419,26 @@ describe("parse (phase 7: for clauses)", () => {
   it("parses for loops without in list", () => {
     expect(parse("for i; do c; done")).toEqual({
       ast: program(stmt(forClause("i", [stmt(simple("c"))]))),
+    });
+  });
+});
+
+describe("parse (phase 8: functions and case)", () => {
+  it("parses function declarations", () => {
+    expect(parse("foo() { bar; }")).toEqual({
+      ast: program(stmt(functionDecl("foo", [stmt(simple("bar"))]))),
+    });
+
+    expect(parse("function foo { bar; }")).toEqual({
+      ast: program(stmt(functionDecl("foo", [stmt(simple("bar"))]))),
+    });
+  });
+
+  it("parses case clauses", () => {
+    expect(parse("case x in y) z ;; esac")).toEqual({
+      ast: program(
+        stmt(caseClause("x", [caseItem([word("y")], [stmt(simple("z"))])])),
+      ),
     });
   });
 });
