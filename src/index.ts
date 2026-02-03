@@ -51,6 +51,7 @@ export type Redirect = {
   op: RedirOp;
   fd?: string;
   target: Word;
+  heredoc?: Word;
 };
 export type SimpleCommand = {
   type: "SimpleCommand";
@@ -167,7 +168,8 @@ type Token =
   | { type: "op"; value: OpTokenValue }
   | { type: "redir"; op: RedirOp; fd?: string }
   | { type: "symbol"; value: SymbolTokenValue }
-  | { type: "arith-cmd"; expr: string };
+  | { type: "arith-cmd"; expr: string }
+  | { type: "heredoc-body"; content: string };
 
 export function parse(
   source: string,
@@ -374,6 +376,44 @@ function tokenize(source: string): Token[] {
       tokens.push({ type: "op", value: ";" });
       atBoundary = true;
       i += 1;
+
+      // Check for pending heredocs by scanning recent tokens
+      const pendingHeredocs: { strip: boolean; delimiter: string }[] = [];
+      for (let ti = 0; ti < tokens.length; ti++) {
+        const t = tokens[ti];
+        if (
+          t &&
+          t.type === "redir" &&
+          (t.op === "<<" || t.op === "<<-") &&
+          !Object.hasOwn(t, "_collected")
+        ) {
+          const delimTok = tokens[ti + 1];
+          if (delimTok && delimTok.type === "word") {
+            pendingHeredocs.push({
+              strip: t.op === "<<-",
+              delimiter: tokenPartsText(delimTok.parts),
+            });
+            (t as Record<string, unknown>)._collected = true;
+          }
+        }
+      }
+
+      // Collect heredoc bodies
+      for (const hd of pendingHeredocs) {
+        let body = "";
+        while (i < source.length) {
+          let lineEnd = source.indexOf("\n", i);
+          if (lineEnd === -1) lineEnd = source.length;
+          const line = source.slice(i, lineEnd);
+          const checkLine = hd.strip ? line.replace(/^\t+/, "") : line;
+          i = lineEnd < source.length ? lineEnd + 1 : lineEnd;
+          if (checkLine === hd.delimiter) break;
+          const processedLine = hd.strip ? line.replace(/^\t+/, "") : line;
+          body += processedLine + "\n";
+        }
+        tokens.push({ type: "heredoc-body", content: body });
+      }
+
       continue;
     }
 
@@ -419,6 +459,29 @@ function tokenize(source: string): Token[] {
       tokens.push({ type: "arith-cmd", expr: source.slice(i + 2, j).trim() });
       i = j + 2;
       atBoundary = true;
+      continue;
+    }
+
+    if (
+      (ch === "<" || ch === ">") &&
+      source.charAt(i + 1) === "(" &&
+      atBoundary
+    ) {
+      const op = ch as "<" | ">";
+      let j = i + 2;
+      let depth = 1;
+      while (j < source.length && depth > 0) {
+        if (source.charAt(j) === "(") depth++;
+        if (source.charAt(j) === ")") depth--;
+        j++;
+      }
+      const raw = source.slice(i + 2, j - 1);
+      tokens.push({
+        type: "word",
+        parts: [{ type: "proc-subst", op, raw }],
+      });
+      i = j;
+      atBoundary = false;
       continue;
     }
 
@@ -655,7 +718,9 @@ class Parser {
               ? token.value
               : token.type === "arith-cmd"
                 ? "(( ... ))"
-                : tokenPartsText(token.parts)
+                : token.type === "heredoc-body"
+                  ? "<<heredoc>>"
+                  : tokenPartsText(token.parts)
         : "";
       throw new Error(`Unexpected token: ${display}`);
     }
@@ -1111,6 +1176,20 @@ class Parser {
         const redirect: Redirect = token.fd
           ? { type: "Redirect", op: token.op, fd: token.fd, target }
           : { type: "Redirect", op: token.op, target };
+        // Collect heredoc body if this is a heredoc redirect
+        if (token.op === "<<" || token.op === "<<-") {
+          // Skip separators to find the heredoc-body token
+          this.skipSeparators();
+          if (this.peek()?.type === "heredoc-body") {
+            const bodyToken = this.consume();
+            if (bodyToken.type === "heredoc-body") {
+              redirect.heredoc = {
+                type: "Word",
+                parts: [{ type: "Literal", value: bodyToken.content }],
+              };
+            }
+          }
+        }
         redirects.push(redirect);
         continue;
       }

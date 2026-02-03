@@ -42,6 +42,7 @@ type Redirect = {
   op: RedirOp;
   fd?: string;
   target: Word;
+  heredoc?: Word;
 };
 type SimpleCommand = {
   type: "SimpleCommand";
@@ -841,7 +842,72 @@ describe("parse (phase 17: arithmetic expansion)", () => {
   });
 });
 
-describe("parse (phase 18: coproc)", () => {
+describe("parse (phase 18: heredoc)", () => {
+  it("parses << heredoc", () => {
+    expect(parse("cat <<EOF\nhello\nEOF")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("cat")],
+          redirects: [
+            {
+              type: "Redirect",
+              op: "<<",
+              target: word("EOF"),
+              heredoc: word("hello\n"),
+            },
+          ],
+        }),
+      ),
+    });
+  });
+
+  it("parses <<- heredoc (strips leading tabs)", () => {
+    expect(parse("cat <<-EOF\n\thello\n\tEOF")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("cat")],
+          redirects: [
+            {
+              type: "Redirect",
+              op: "<<-",
+              target: word("EOF"),
+              heredoc: word("hello\n"),
+            },
+          ],
+        }),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 19: process substitution)", () => {
+  it("parses <() process substitution", () => {
+    expect(parse("diff <(foo) <(bar)")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [
+            word("diff"),
+            wordParts({
+              type: "ProcSubst",
+              op: "<",
+              stmts: [stmt(simple("foo"))],
+            }),
+            wordParts({
+              type: "ProcSubst",
+              op: "<",
+              stmts: [stmt(simple("bar"))],
+            }),
+          ],
+        }),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 20: coproc)", () => {
   it("parses coproc with command", () => {
     expect(parse("coproc foo")).toEqual({
       ast: program(stmt(coprocClause(stmt(simple("foo"))))),
