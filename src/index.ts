@@ -23,6 +23,12 @@ export type SimpleCommand = {
 };
 export type Subshell = { type: "Subshell"; body: Statement[] };
 export type Block = { type: "Block"; body: Statement[] };
+export type IfClause = {
+  type: "IfClause";
+  cond: Statement[];
+  then: Statement[];
+  else?: Statement[];
+};
 export type Pipeline = { type: "Pipeline"; commands: Statement[] };
 export type Logical = {
   type: "Logical";
@@ -30,7 +36,13 @@ export type Logical = {
   left: Statement;
   right: Statement;
 };
-export type Command = SimpleCommand | Subshell | Block | Pipeline | Logical;
+export type Command =
+  | SimpleCommand
+  | Subshell
+  | Block
+  | IfClause
+  | Pipeline
+  | Logical;
 export type Statement = {
   type: "Statement";
   command: Command;
@@ -356,6 +368,9 @@ class Parser {
   }
 
   private parseCommandAtom(): Command {
+    if (this.matchKeyword("if")) {
+      return this.parseIfClause();
+    }
     if (this.matchSymbol("(")) {
       return this.parseSubshell();
     }
@@ -386,6 +401,48 @@ class Parser {
       if (this.isEof()) {
         throw new Error(
           `Unexpected end of input while looking for ${endSymbol}`,
+        );
+      }
+      body.push(this.parseStatement());
+      this.skipSeparators();
+    }
+    return body;
+  }
+
+  private parseIfClause(): IfClause {
+    this.consumeKeyword("if");
+    const cond = this.parseStatementsUntilKeyword(["then"]);
+    this.consumeKeyword("then");
+    const thenBranch = this.parseStatementsUntilKeyword(["else", "fi"]);
+    let elseBranch: Statement[] | undefined;
+    if (this.matchKeyword("else")) {
+      this.consumeKeyword("else");
+      elseBranch = this.parseStatementsUntilKeyword(["fi"]);
+    }
+    this.consumeKeyword("fi");
+    return elseBranch
+      ? {
+          type: "IfClause",
+          cond,
+          // biome-ignore lint/suspicious/noThenProperty: shell AST field
+          then: thenBranch,
+          else: elseBranch,
+        }
+      : {
+          type: "IfClause",
+          cond,
+          // biome-ignore lint/suspicious/noThenProperty: shell AST field
+          then: thenBranch,
+        };
+  }
+
+  private parseStatementsUntilKeyword(endKeywords: string[]): Statement[] {
+    const body: Statement[] = [];
+    this.skipSeparators();
+    while (!this.matchKeywordIn(endKeywords)) {
+      if (this.isEof()) {
+        throw new Error(
+          `Unexpected end of input while looking for ${endKeywords.join(", ")}`,
         );
       }
       body.push(this.parseStatement());
@@ -506,6 +563,17 @@ class Parser {
     return this.peek()?.type === "redir";
   }
 
+  private matchKeyword(value: string) {
+    const token = this.peek();
+    return token?.type === "word" && token.parts.length === 1
+      ? token.parts[0] === value
+      : false;
+  }
+
+  private matchKeywordIn(values: string[]) {
+    return values.some((value) => this.matchKeyword(value));
+  }
+
   private matchSymbol(value: SymbolTokenValue) {
     const token = this.peek();
     return token?.type === "symbol" && token.value === value;
@@ -515,6 +583,17 @@ class Parser {
     const token = this.consume();
     if (token.type !== "symbol" || token.value !== value) {
       throw new Error(`Expected symbol ${value}`);
+    }
+  }
+
+  private consumeKeyword(value: string) {
+    const token = this.consume();
+    if (
+      token.type !== "word" ||
+      token.parts.length !== 1 ||
+      token.parts[0] !== value
+    ) {
+      throw new Error(`Expected keyword ${value}`);
     }
   }
 
