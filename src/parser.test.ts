@@ -50,6 +50,7 @@ type Statement = {
   type: "Statement";
   command: Command;
   background?: boolean;
+  negated?: boolean;
 };
 type Program = { type: "Program"; body: Statement[] };
 type Command =
@@ -133,10 +134,20 @@ const caseClause = (wordValue: string, items: CaseItem[]): CaseClause => ({
   word: word(wordValue),
   items,
 });
-const stmt = (command: Command, background = false): Statement =>
-  background
-    ? { type: "Statement", command, background }
-    : { type: "Statement", command };
+const stmt = (
+  command: Command,
+  background = false,
+  negated = false,
+): Statement => {
+  const value: Statement = { type: "Statement", command };
+  if (background) {
+    value.background = true;
+  }
+  if (negated) {
+    value.negated = true;
+  }
+  return value;
+};
 const program = (...body: Statement[]): Program => ({ type: "Program", body });
 
 // Tests derived from mvdan/sh syntax/filetests_test.go command parsing cases.
@@ -389,6 +400,20 @@ describe("parse (phase 5: if clauses)", () => {
       ),
     });
   });
+
+  it("parses if/elif/then/fi", () => {
+    expect(parse("if a; then b; elif c; then d; fi")).toEqual({
+      ast: program(
+        stmt(
+          ifClause(
+            [stmt(simple("a"))],
+            [stmt(simple("b"))],
+            [stmt(ifClause([stmt(simple("c"))], [stmt(simple("d"))]))],
+          ),
+        ),
+      ),
+    });
+  });
 });
 
 describe("parse (phase 6: while/until clauses)", () => {
@@ -439,6 +464,14 @@ describe("parse (phase 8: functions and case)", () => {
       ast: program(
         stmt(caseClause("x", [caseItem([word("y")], [stmt(simple("z"))])])),
       ),
+    });
+  });
+});
+
+describe("parse (phase 9: negation)", () => {
+  it("parses negated commands", () => {
+    expect(parse("! foo")).toEqual({
+      ast: program(stmt(simple("foo"), false, true)),
     });
   });
 });
