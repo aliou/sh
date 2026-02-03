@@ -41,6 +41,12 @@ export type ForClause = {
   items?: Word[];
   body: Statement[];
 };
+export type SelectClause = {
+  type: "SelectClause";
+  name: string;
+  items?: Word[];
+  body: Statement[];
+};
 export type FunctionDecl = {
   type: "FunctionDecl";
   name: string;
@@ -70,6 +76,7 @@ export type Command =
   | IfClause
   | WhileClause
   | ForClause
+  | SelectClause
   | FunctionDecl
   | CaseClause
   | Pipeline
@@ -429,6 +436,9 @@ class Parser {
     if (this.matchKeyword("for")) {
       return this.parseForClause();
     }
+    if (this.matchKeyword("select")) {
+      return this.parseSelectClause();
+    }
     if (this.matchKeyword("case")) {
       return this.parseCaseClause();
     }
@@ -583,6 +593,40 @@ class Parser {
     return items
       ? { type: "ForClause", name, items, body }
       : { type: "ForClause", name, body };
+  }
+
+  private parseSelectClause(): SelectClause {
+    this.consumeKeyword("select");
+    const nameToken = this.consume();
+    if (nameToken.type !== "word") {
+      throw new Error("Expected select variable name");
+    }
+    const name = nameToken.parts.join("");
+    let items: Word[] | undefined;
+    if (this.matchKeyword("in")) {
+      this.consumeKeyword("in");
+      const collected: Word[] = [];
+      while (this.matchWord() && !this.matchKeyword("do")) {
+        const itemToken = this.consume();
+        if (itemToken.type !== "word") {
+          throw new Error("Expected select item word");
+        }
+        collected.push(this.wordFromParts(itemToken.parts));
+      }
+      if (collected.length > 0) {
+        items = collected;
+      }
+    }
+    if (this.matchOp(";")) {
+      this.consume();
+    }
+    this.skipSeparators();
+    this.consumeKeyword("do");
+    const body = this.parseStatementsUntilKeyword(["done"]);
+    this.consumeKeyword("done");
+    return items
+      ? { type: "SelectClause", name, items, body }
+      : { type: "SelectClause", name, body };
   }
 
   private parseFunctionDecl(): FunctionDecl {
