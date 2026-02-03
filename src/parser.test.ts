@@ -3,7 +3,19 @@ import { parse } from "./index.js";
 
 type Literal = { type: "Literal"; value: string };
 type Word = { type: "Word"; parts: Literal[] };
-type SimpleCommand = { type: "SimpleCommand"; words: Word[] };
+type Assignment = { type: "Assignment"; name: string; value?: Word };
+type Redirect = {
+  type: "Redirect";
+  op: ">" | "<" | ">>";
+  fd?: string;
+  target: Word;
+};
+type SimpleCommand = {
+  type: "SimpleCommand";
+  words?: Word[];
+  assignments?: Assignment[];
+  redirects?: Redirect[];
+};
 type Pipeline = { type: "Pipeline"; commands: Statement[] };
 type Logical = {
   type: "Logical";
@@ -29,6 +41,18 @@ const simple = (...words: string[]): SimpleCommand => ({
   type: "SimpleCommand",
   words: words.map(word),
 });
+const assign = (name: string, value?: string): Assignment =>
+  value === undefined
+    ? { type: "Assignment", name }
+    : { type: "Assignment", name, value: word(value) };
+const redirect = (
+  op: ">" | "<" | ">>",
+  target: string,
+  fd?: string,
+): Redirect =>
+  fd === undefined
+    ? { type: "Redirect", op, target: word(target) }
+    : { type: "Redirect", op, target: word(target), fd };
 const stmt = (command: Command, background = false): Statement =>
   background
     ? { type: "Statement", command, background }
@@ -184,6 +208,65 @@ describe("parse (phase 2: words, quotes, comments)", () => {
   it("treats backslash-newline as whitespace", () => {
     expect(parse("foo \\\n bar")).toEqual({
       ast: program(stmt(simple("foo", "bar"))),
+    });
+  });
+});
+
+describe("parse (phase 3: assignments and redirects)", () => {
+  it("parses assignment-only commands", () => {
+    expect(parse("a=b")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          assignments: [assign("a", "b")],
+        }),
+      ),
+    });
+  });
+
+  it("parses assignments before words", () => {
+    expect(parse("a=b foo")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          assignments: [assign("a", "b")],
+          words: [word("foo")],
+        }),
+      ),
+    });
+  });
+
+  it("parses redirects", () => {
+    expect(parse("foo >out")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect(">", "out")],
+        }),
+      ),
+    });
+
+    expect(parse(">out foo")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect(">", "out")],
+        }),
+      ),
+    });
+  });
+
+  it("parses redirects with file descriptors", () => {
+    expect(parse("foo 2>out")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect(">", "out", "2")],
+        }),
+      ),
     });
   });
 });
