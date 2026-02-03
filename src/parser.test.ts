@@ -45,6 +45,7 @@ type SelectClause = {
 type FunctionDecl = { type: "FunctionDecl"; name: string; body: Statement[] };
 type CaseItem = { type: "CaseItem"; patterns: Word[]; body: Statement[] };
 type CaseClause = { type: "CaseClause"; word: Word; items: CaseItem[] };
+type TimeClause = { type: "TimeClause"; command: Statement };
 type Pipeline = { type: "Pipeline"; commands: Statement[] };
 type Logical = {
   type: "Logical";
@@ -69,6 +70,7 @@ type Command =
   | SelectClause
   | FunctionDecl
   | CaseClause
+  | TimeClause
   | Pipeline
   | Logical;
 
@@ -148,6 +150,10 @@ const caseClause = (wordValue: string, items: CaseItem[]): CaseClause => ({
   type: "CaseClause",
   word: word(wordValue),
   items,
+});
+const timeClause = (command: Statement): TimeClause => ({
+  type: "TimeClause",
+  command,
 });
 const stmt = (
   command: Command,
@@ -518,6 +524,14 @@ describe("parse (phase 10: negation)", () => {
   it("parses negated commands", () => {
     expect(parse("! foo")).toEqual({
       ast: program(stmt(simple("foo"), false, true)),
+    });
+  });
+});
+
+describe("parse (phase 11: time)", () => {
+  it("parses time clauses", () => {
+    expect(parse("time foo")).toEqual({
+      ast: program(stmt(timeClause(stmt(simple("foo"))))),
     });
   });
 });
