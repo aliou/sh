@@ -691,10 +691,13 @@ class Parser {
 
   private parseCaseItemBody(): Statement[] {
     const body: Statement[] = [];
-    this.skipSeparators();
+    this.skipCaseSeparators();
     while (!this.matchKeyword("esac") && !this.isCaseItemEnd()) {
       body.push(this.parseStatement());
-      this.skipSeparators();
+      if (this.isCaseItemEnd()) {
+        break;
+      }
+      this.skipCaseSeparators();
     }
     return body;
   }
@@ -813,6 +816,12 @@ class Parser {
 
   private skipSeparators() {
     while (this.matchOp(";")) {
+      this.consume();
+    }
+  }
+
+  private skipCaseSeparators() {
+    while (this.matchOp(";") && !this.peekOp(";")) {
       this.consume();
     }
   }
