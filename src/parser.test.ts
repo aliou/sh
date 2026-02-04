@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 import { parse } from "./index.js";
 
 type Literal = { type: "Literal"; value: string };
@@ -692,85 +692,21 @@ describe("parse (phase 11: time)", () => {
 });
 
 describe("parse (phase 12: extended redirects)", () => {
-  it("parses clobber redirect >|", () => {
-    expect(parse("foo >| bar")).toEqual({
+  it.each([
+    { input: "foo >| bar", op: ">|" as RedirOp, target: "bar" },
+    { input: "foo >&2", op: ">&" as RedirOp, target: "2" },
+    { input: "foo <&3", op: "<&" as RedirOp, target: "3" },
+    { input: "foo &>bar", op: "&>" as RedirOp, target: "bar" },
+    { input: "foo &>>bar", op: "&>>" as RedirOp, target: "bar" },
+    { input: "foo <<<bar", op: "<<<" as RedirOp, target: "bar" },
+    { input: "foo <>bar", op: "<>" as RedirOp, target: "bar" },
+  ])("parses $op redirect", ({ input, op, target }) => {
+    expect(parse(input)).toEqual({
       ast: program(
         stmt({
           type: "SimpleCommand",
           words: [word("foo")],
-          redirects: [redirect(">|", "bar")],
-        }),
-      ),
-    });
-  });
-
-  it("parses fd dup >&", () => {
-    expect(parse("foo >&2")).toEqual({
-      ast: program(
-        stmt({
-          type: "SimpleCommand",
-          words: [word("foo")],
-          redirects: [redirect(">&", "2")],
-        }),
-      ),
-    });
-  });
-
-  it("parses fd dup <&", () => {
-    expect(parse("foo <&3")).toEqual({
-      ast: program(
-        stmt({
-          type: "SimpleCommand",
-          words: [word("foo")],
-          redirects: [redirect("<&", "3")],
-        }),
-      ),
-    });
-  });
-
-  it("parses &> redirect", () => {
-    expect(parse("foo &>bar")).toEqual({
-      ast: program(
-        stmt({
-          type: "SimpleCommand",
-          words: [word("foo")],
-          redirects: [redirect("&>", "bar")],
-        }),
-      ),
-    });
-  });
-
-  it("parses &>> redirect", () => {
-    expect(parse("foo &>>bar")).toEqual({
-      ast: program(
-        stmt({
-          type: "SimpleCommand",
-          words: [word("foo")],
-          redirects: [redirect("&>>", "bar")],
-        }),
-      ),
-    });
-  });
-
-  it("parses here-string <<<", () => {
-    expect(parse("foo <<<bar")).toEqual({
-      ast: program(
-        stmt({
-          type: "SimpleCommand",
-          words: [word("foo")],
-          redirects: [redirect("<<<", "bar")],
-        }),
-      ),
-    });
-  });
-
-  it("parses <> redirect", () => {
-    expect(parse("foo <>bar")).toEqual({
-      ast: program(
-        stmt({
-          type: "SimpleCommand",
-          words: [word("foo")],
-          redirects: [redirect("<>", "bar")],
+          redirects: [redirect(op, target)],
         }),
       ),
     });
@@ -1072,49 +1008,65 @@ describe("parse (phase 21: coproc)", () => {
 });
 
 describe("parse (phase 22: decl clause)", () => {
-  it("parses export with assignment", () => {
-    expect(parse("export FOO=bar")).toEqual({
-      ast: program(
-        stmt(
-          declClause("export", {
-            assigns: [assign("FOO", "bar")],
-          }),
-        ),
-      ),
+  it.each([
+    {
+      input: "export FOO=bar",
+      variant: "export" as const,
+      assigns: [assign("FOO", "bar")],
+    },
+    {
+      input: "local x=1",
+      variant: "local" as const,
+      assigns: [assign("x", "1")],
+    },
+    {
+      input: "nameref ref=target",
+      variant: "nameref" as const,
+      assigns: [assign("ref", "target")],
+    },
+  ])("parses $variant with assignment", ({
+    input,
+    variant,
+    assigns: assignList,
+  }) => {
+    expect(parse(input)).toEqual({
+      ast: program(stmt(declClause(variant, { assigns: assignList }))),
     });
   });
 
   it("parses export with multiple names", () => {
     expect(parse("export FOO BAR")).toEqual({
       ast: program(
-        stmt(
-          declClause("export", {
-            args: [word("FOO"), word("BAR")],
-          }),
-        ),
+        stmt(declClause("export", { args: [word("FOO"), word("BAR")] })),
       ),
     });
   });
 
-  it("parses local with assignment", () => {
-    expect(parse("local x=1")).toEqual({
+  it.each([
+    {
+      input: "declare -r FOO=bar",
+      variant: "declare" as const,
+      flag: "-r",
+      assignVal: assign("FOO", "bar"),
+    },
+    {
+      input: "typeset -i count=0",
+      variant: "typeset" as const,
+      flag: "-i",
+      assignVal: assign("count", "0"),
+    },
+  ])("parses $variant with flag and assignment", ({
+    input,
+    variant,
+    flag,
+    assignVal,
+  }) => {
+    expect(parse(input)).toEqual({
       ast: program(
         stmt(
-          declClause("local", {
-            assigns: [assign("x", "1")],
-          }),
-        ),
-      ),
-    });
-  });
-
-  it("parses declare with flags", () => {
-    expect(parse("declare -r FOO=bar")).toEqual({
-      ast: program(
-        stmt(
-          declClause("declare", {
-            args: [word("-r")],
-            assigns: [assign("FOO", "bar")],
+          declClause(variant, {
+            args: [word(flag)],
+            assigns: [assignVal],
           }),
         ),
       ),
@@ -1124,36 +1076,7 @@ describe("parse (phase 22: decl clause)", () => {
   it("parses readonly with names", () => {
     expect(parse("readonly X Y")).toEqual({
       ast: program(
-        stmt(
-          declClause("readonly", {
-            args: [word("X"), word("Y")],
-          }),
-        ),
-      ),
-    });
-  });
-
-  it("parses typeset with flag and assignment", () => {
-    expect(parse("typeset -i count=0")).toEqual({
-      ast: program(
-        stmt(
-          declClause("typeset", {
-            args: [word("-i")],
-            assigns: [assign("count", "0")],
-          }),
-        ),
-      ),
-    });
-  });
-
-  it("parses nameref", () => {
-    expect(parse("nameref ref=target")).toEqual({
-      ast: program(
-        stmt(
-          declClause("nameref", {
-            assigns: [assign("ref", "target")],
-          }),
-        ),
+        stmt(declClause("readonly", { args: [word("X"), word("Y")] })),
       ),
     });
   });
@@ -1298,9 +1221,10 @@ describe("parse (phase 24: array expressions)", () => {
 describe("parse (phase 25: c-style for loop)", () => {
   it("parses c-style for loop", () => {
     const result = parse("for ((i=0; i<10; i++)); do echo $i; done");
-    expect(result.ast.body).toHaveLength(1);
-    const command = result.ast.body[0]?.command as CStyleLoop;
-    expect(command.type).toBe("CStyleLoop");
+    const first = result.ast.body[0];
+    assert(first, "expected at least one statement");
+    const command = first.command;
+    assert(command.type === "CStyleLoop", "expected CStyleLoop");
     expect(command.init).toBe("i=0");
     expect(command.cond).toBe("i<10");
     expect(command.post).toBe("i++");
@@ -1315,8 +1239,10 @@ describe("parse (phase 25: c-style for loop)", () => {
 
   it("parses c-style for loop with only condition", () => {
     const result = parse("for (( ; i<5; )); do echo $i; done");
-    const command = result.ast.body[0]?.command as CStyleLoop;
-    expect(command.type).toBe("CStyleLoop");
+    const first = result.ast.body[0];
+    assert(first, "expected at least one statement");
+    const command = first.command;
+    assert(command.type === "CStyleLoop", "expected CStyleLoop");
     expect(command.init).toBeUndefined();
     expect(command.cond).toBe("i<5");
     expect(command.post).toBeUndefined();
@@ -1424,79 +1350,103 @@ describe("guardrail validation: package manager enforcement", () => {
     return names;
   }
 
-  it("grep for npm pattern is not an npm command", () => {
-    const { ast } = parse(String.raw`grep -rn '\bnpm\b' src/`);
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["grep"]);
+  // Tests where npm appears in arguments/patterns but is NOT a command.
+  it.each([
+    {
+      desc: "grep for npm pattern",
+      input: String.raw`grep -rn '\bnpm\b' src/`,
+      expected: ["grep"],
+    },
+    {
+      desc: "grep with multiple npm/npx patterns",
+      input: String.raw`grep -rn '\bnpx\b\|\bnpm \b\|\bnpm$' AGENTS.md`,
+      expected: ["grep"],
+    },
+    {
+      desc: "echo containing npm",
+      input: 'echo "use npm install instead"',
+      expected: ["echo"],
+    },
+    {
+      desc: "cat of package.json",
+      input: "cat /path/to/package.json",
+      expected: ["cat"],
+    },
+    {
+      desc: "npx is not npm",
+      input: "npx wrangler --version",
+      expected: ["npx"],
+    },
+    {
+      desc: "pnpm is not npm",
+      input: "pnpm --filter pi-relay-server typecheck",
+      expected: ["pnpm"],
+    },
+    {
+      desc: "which npm is not running npm",
+      input: "which npm 2>/dev/null || echo 'npm not found'",
+      expected: ["which", "echo"],
+    },
+    {
+      desc: "if condition with npm check",
+      input: "if command -v npm; then echo found; fi",
+      expected: ["command", "echo"],
+    },
+    {
+      desc: "variable assignment containing npm",
+      input: 'PKG_MGR=npm echo "using $PKG_MGR"',
+      expected: ["echo"],
+    },
+    {
+      desc: "herestring containing npm",
+      input: "grep -c npm <<< 'npm install pnpm bun'",
+      expected: ["grep"],
+    },
+    {
+      desc: "pipeline with npm in args",
+      input: "find . -name '*.json' | grep npm | head -5",
+      expected: ["find", "grep", "head"],
+    },
+    {
+      desc: "biome check via pnpm exec",
+      input: "pnpm exec biome check --write src/sandbox/cloudflare.test.ts",
+      expected: ["pnpm"],
+    },
+    {
+      desc: "curl piped to jq",
+      input: "curl -s http://localhost:31415/health | jq .",
+      expected: ["curl", "jq"],
+    },
+  ])("$desc: npm is not extracted as a command", ({ input, expected }) => {
+    const cmds = extractCommandNames(parse(input).ast);
+    expect(cmds).toEqual(expected);
     expect(cmds).not.toContain("npm");
   });
 
-  it("grep with multiple patterns including npm/npx", () => {
-    const { ast } = parse(
-      String.raw`grep -rn '\bnpx\b\|\bnpm \b\|\bnpm$' AGENTS.md`,
-    );
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["grep"]);
-  });
-
-  it("echo containing npm is not an npm command", () => {
-    const { ast } = parse('echo "use npm install instead"');
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["echo"]);
-  });
-
-  it("cat of package.json (which contains npm) is not npm", () => {
-    const { ast } = parse("cat /path/to/package.json");
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["cat"]);
-  });
-
-  it("npx wrangler is an npx command, not npm", () => {
-    const { ast } = parse("npx wrangler --version");
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["npx"]);
-    expect(cmds).not.toContain("npm");
-  });
-
-  it("actual npm install is correctly identified", () => {
-    const { ast } = parse("npm install --omit=dev");
-    const cmds = extractCommandNames(ast);
+  // Tests where npm IS a real command.
+  it.each([
+    { desc: "npm install", input: "npm install --omit=dev" },
+    { desc: "npm ci", input: "npm ci" },
+    { desc: "npm in command substitution", input: "echo $(npm pack)" },
+    { desc: "npm in subshell", input: "(cd /tmp && npm install)" },
+  ])("$desc: npm is extracted as a command", ({ input }) => {
+    const cmds = extractCommandNames(parse(input).ast);
     expect(cmds).toContain("npm");
-  });
-
-  it("actual npm ci is correctly identified", () => {
-    const { ast } = parse("npm ci");
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toContain("npm");
-  });
-
-  it("pnpm command is identified as pnpm, not npm", () => {
-    const { ast } = parse("pnpm --filter pi-relay-server typecheck");
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["pnpm"]);
-    expect(cmds).not.toContain("npm");
   });
 
   it("cd && pnpm: both commands identified correctly", () => {
-    const { ast } = parse("cd /project && pnpm --filter pi-relay-server test");
-    const cmds = extractCommandNames(ast);
+    const cmds = extractCommandNames(
+      parse("cd /project && pnpm --filter pi-relay-server test").ast,
+    );
     expect(cmds).toEqual(["cd", "pnpm"]);
     expect(cmds).not.toContain("npm");
   });
 
   it("npm in || fallback: both branches identified", () => {
-    const { ast } = parse(
-      "npm ci --omit=dev 2>/dev/null || npm install --omit=dev",
+    const cmds = extractCommandNames(
+      parse("npm ci --omit=dev 2>/dev/null || npm install --omit=dev").ast,
     );
-    const cmds = extractCommandNames(ast);
     expect(cmds).toEqual(["npm", "npm"]);
-  });
-
-  it("which npm is not running npm", () => {
-    const { ast } = parse("which npm 2>/dev/null || echo 'npm not found'");
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["which", "echo"]);
-    expect(cmds).not.toContain("npm");
   });
 
   it("heredoc containing npm install is not an npm command", () => {
@@ -1504,8 +1454,7 @@ describe("guardrail validation: package manager enforcement", () => {
 RUN npm install --omit=dev
 npm ci
 EOF`;
-    const { ast } = parse(input);
-    const cmds = extractCommandNames(ast);
+    const cmds = extractCommandNames(parse(input).ast);
     expect(cmds).toEqual(["cat"]);
     expect(cmds).not.toContain("npm");
   });
@@ -1515,78 +1464,20 @@ EOF`;
 FROM node:22-slim
 RUN npm install --omit=dev
 DOCKERFILE`;
-    const { ast } = parse(input);
-    const cmds = extractCommandNames(ast);
+    const cmds = extractCommandNames(parse(input).ast);
     expect(cmds).toEqual(["docker"]);
     expect(cmds).not.toContain("npm");
   });
 
-  it("command substitution: inner npm is a real command", () => {
-    const { ast } = parse("echo $(npm pack)");
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toContain("echo");
-    expect(cmds).toContain("npm");
-  });
-
-  it("pipeline: only first words are commands", () => {
-    const { ast } = parse("find . -name '*.json' | grep npm | head -5");
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["find", "grep", "head"]);
-    expect(cmds).not.toContain("npm");
-  });
-
-  it("subshell: npm inside is a real command", () => {
-    const { ast } = parse("(cd /tmp && npm install)");
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toContain("cd");
-    expect(cmds).toContain("npm");
-  });
-
-  it("if condition with npm check", () => {
-    const { ast } = parse("if command -v npm; then echo found; fi");
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toContain("command");
-    expect(cmds).toContain("echo");
-    // "npm" is an argument to "command -v", not a command itself
-    expect(cmds).not.toContain("npm");
-  });
-
-  it("variable assignment containing npm is not a command", () => {
-    const { ast } = parse('PKG_MGR=npm echo "using $PKG_MGR"');
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["echo"]);
-    expect(cmds).not.toContain("npm");
-  });
-
-  it("herestring containing npm is not a command", () => {
-    const { ast } = parse("grep -c npm <<< 'npm install pnpm bun'");
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["grep"]);
-  });
-
   it("real session: cd && pnpm filter test piped to tail", () => {
-    const { ast } = parse(
-      "cd /project && pnpm --filter pi-relay-server test 2>&1 | tail -15",
+    const cmds = extractCommandNames(
+      parse("cd /project && pnpm --filter pi-relay-server test 2>&1 | tail -15")
+        .ast,
     );
-    const cmds = extractCommandNames(ast);
     expect(cmds).toContain("cd");
     expect(cmds).toContain("pnpm");
     expect(cmds).toContain("tail");
     expect(cmds).not.toContain("npm");
-  });
-
-  it("real session: curl piped to jq (no npm)", () => {
-    const { ast } = parse("curl -s http://localhost:31415/health | jq .");
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["curl", "jq"]);
-  });
-
-  it("real session: biome check with npm in path is not npm", () => {
-    const { ast } = parse(
-      "pnpm exec biome check --write src/sandbox/cloudflare.test.ts",
-    );
-    const cmds = extractCommandNames(ast);
-    expect(cmds).toEqual(["pnpm"]);
   });
 
   it("real session: write Dockerfile via heredoc then docker build", () => {
