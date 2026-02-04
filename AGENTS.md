@@ -23,7 +23,7 @@ Goal: TypeScript reimplementation of a shell parser/AST (mvdan/sh-style), target
 - **Release**: Runs on push to `main` via changesets. If pending changesets exist, opens a "Version Packages" PR. Merging that PR publishes to GitHub npm registry.
 
 ## Publishing
-This package is published exclusively to the GitHub npm registry under `@aliou/sh`. It is NOT published to the public npm registry (npmjs.com). Do not configure or attempt npm publishing to npmjs.
+This package is published to the public npm registry (npmjs.com) under `@aliou/sh`. Uses OIDC for authentication - no token secrets needed after initial manual publish.
 
 Release workflow (using [changesets](https://github.com/changesets/changesets)):
 1. Make code changes
