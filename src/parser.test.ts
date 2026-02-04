@@ -23,7 +23,13 @@ type WordPart =
   | ArithExp
   | ProcSubst;
 type Word = { type: "Word"; parts: WordPart[] };
-type Assignment = { type: "Assignment"; name: string; value?: Word };
+type Assignment = {
+  type: "Assignment";
+  name: string;
+  append?: boolean;
+  value?: Word;
+  array?: ArrayExpr;
+};
 type RedirOp =
   | ">"
   | "<"
@@ -100,7 +106,11 @@ type Statement = {
   background?: boolean;
   negated?: boolean;
 };
-type Program = { type: "Program"; body: Statement[] };
+type Program = {
+  type: "Program";
+  body: Statement[];
+  comments?: CommentNode[];
+};
 type Command =
   | SimpleCommand
   | Subshell
@@ -116,7 +126,29 @@ type Command =
   | ArithCmd
   | CoprocClause
   | Pipeline
-  | Logical;
+  | Logical
+  | DeclClause
+  | LetClause
+  | CStyleLoop;
+
+type DeclClause = {
+  type: "DeclClause";
+  variant: "declare" | "local" | "export" | "readonly" | "typeset" | "nameref";
+  args?: Word[];
+  assigns?: Assignment[];
+  redirects?: Redirect[];
+};
+type LetClause = { type: "LetClause"; exprs: Word[]; redirects?: Redirect[] };
+type CStyleLoop = {
+  type: "CStyleLoop";
+  init?: string;
+  cond?: string;
+  post?: string;
+  body: Statement[];
+};
+type ArrayExpr = { type: "ArrayExpr"; elems: ArrayElem[] };
+type ArrayElem = { type: "ArrayElem"; index?: Word; value?: Word };
+type CommentNode = { type: "Comment"; text: string };
 
 const lit = (value: string): Literal => ({ type: "Literal", value });
 const sgl = (value: string): SglQuoted => ({ type: "SglQuoted", value });
@@ -153,10 +185,58 @@ const simple = (...words: string[]): SimpleCommand => ({
   type: "SimpleCommand",
   words: words.map(word),
 });
-const assign = (name: string, value?: string): Assignment =>
-  value === undefined
-    ? { type: "Assignment", name }
-    : { type: "Assignment", name, value: word(value) };
+const assign = (
+  name: string,
+  value?: string,
+  opts?: { append?: boolean; array?: ArrayExpr },
+): Assignment => {
+  const a: Assignment = { type: "Assignment", name };
+  if (opts?.append) a.append = true;
+  if (value !== undefined) a.value = word(value);
+  if (opts?.array) a.array = opts.array;
+  return a;
+};
+const arrayExpr = (...elems: ArrayElem[]): ArrayExpr => ({
+  type: "ArrayExpr",
+  elems,
+});
+const arrayElem = (value?: string, index?: string): ArrayElem => {
+  const e: ArrayElem = { type: "ArrayElem" };
+  if (value !== undefined) e.value = word(value);
+  if (index !== undefined) e.index = word(index);
+  return e;
+};
+const declClause = (
+  variant: DeclClause["variant"],
+  opts?: {
+    args?: Word[];
+    assigns?: Assignment[];
+    redirects?: Redirect[];
+  },
+): DeclClause => {
+  const d: DeclClause = { type: "DeclClause", variant };
+  if (opts?.args) d.args = opts.args;
+  if (opts?.assigns) d.assigns = opts.assigns;
+  if (opts?.redirects) d.redirects = opts.redirects;
+  return d;
+};
+const letClause = (exprs: Word[], redirects?: Redirect[]): LetClause => {
+  const l: LetClause = { type: "LetClause", exprs };
+  if (redirects) l.redirects = redirects;
+  return l;
+};
+const cStyleLoop = (
+  body: Statement[],
+  init?: string,
+  cond?: string,
+  post?: string,
+): CStyleLoop => {
+  const c: CStyleLoop = { type: "CStyleLoop", body };
+  if (init !== undefined) c.init = init;
+  if (cond !== undefined) c.cond = cond;
+  if (post !== undefined) c.post = post;
+  return c;
+};
 const redirect = (op: RedirOp, target: string, fd?: string): Redirect =>
   fd === undefined
     ? { type: "Redirect", op, target: word(target) }
@@ -988,6 +1068,312 @@ describe("parse (phase 21: coproc)", () => {
         stmt(coprocClause(stmt(block(stmt(simple("foo")))), "NAME")),
       ),
     });
+  });
+});
+
+describe("parse (phase 22: decl clause)", () => {
+  it("parses export with assignment", () => {
+    expect(parse("export FOO=bar")).toEqual({
+      ast: program(
+        stmt(
+          declClause("export", {
+            assigns: [assign("FOO", "bar")],
+          }),
+        ),
+      ),
+    });
+  });
+
+  it("parses export with multiple names", () => {
+    expect(parse("export FOO BAR")).toEqual({
+      ast: program(
+        stmt(
+          declClause("export", {
+            args: [word("FOO"), word("BAR")],
+          }),
+        ),
+      ),
+    });
+  });
+
+  it("parses local with assignment", () => {
+    expect(parse("local x=1")).toEqual({
+      ast: program(
+        stmt(
+          declClause("local", {
+            assigns: [assign("x", "1")],
+          }),
+        ),
+      ),
+    });
+  });
+
+  it("parses declare with flags", () => {
+    expect(parse("declare -r FOO=bar")).toEqual({
+      ast: program(
+        stmt(
+          declClause("declare", {
+            args: [word("-r")],
+            assigns: [assign("FOO", "bar")],
+          }),
+        ),
+      ),
+    });
+  });
+
+  it("parses readonly with names", () => {
+    expect(parse("readonly X Y")).toEqual({
+      ast: program(
+        stmt(
+          declClause("readonly", {
+            args: [word("X"), word("Y")],
+          }),
+        ),
+      ),
+    });
+  });
+
+  it("parses typeset with flag and assignment", () => {
+    expect(parse("typeset -i count=0")).toEqual({
+      ast: program(
+        stmt(
+          declClause("typeset", {
+            args: [word("-i")],
+            assigns: [assign("count", "0")],
+          }),
+        ),
+      ),
+    });
+  });
+
+  it("parses nameref", () => {
+    expect(parse("nameref ref=target")).toEqual({
+      ast: program(
+        stmt(
+          declClause("nameref", {
+            assigns: [assign("ref", "target")],
+          }),
+        ),
+      ),
+    });
+  });
+
+  it("parses export with redirect", () => {
+    expect(parse("export FOO=bar 2>/dev/null")).toEqual({
+      ast: program(
+        stmt(
+          declClause("export", {
+            assigns: [assign("FOO", "bar")],
+            redirects: [redirect(">", "/dev/null", "2")],
+          }),
+        ),
+      ),
+    });
+  });
+
+  it("parses declare -a with array", () => {
+    expect(parse("declare -a arr=(a b c)")).toEqual({
+      ast: program(
+        stmt(
+          declClause("declare", {
+            args: [word("-a")],
+            assigns: [
+              assign("arr", undefined, {
+                array: arrayExpr(
+                  arrayElem("a"),
+                  arrayElem("b"),
+                  arrayElem("c"),
+                ),
+              }),
+            ],
+          }),
+        ),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 23: append assignment)", () => {
+  it("parses append assignment", () => {
+    expect(parse("PATH+=/usr/local/bin echo hi")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("echo"), word("hi")],
+          assignments: [assign("PATH", "/usr/local/bin", { append: true })],
+        }),
+      ),
+    });
+  });
+
+  it("parses standalone append assignment", () => {
+    expect(parse("arr+=value")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          assignments: [assign("arr", "value", { append: true })],
+        }),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 24: array expressions)", () => {
+  it("parses simple array assignment", () => {
+    expect(parse("arr=(a b c)")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          assignments: [
+            assign("arr", undefined, {
+              array: arrayExpr(arrayElem("a"), arrayElem("b"), arrayElem("c")),
+            }),
+          ],
+        }),
+      ),
+    });
+  });
+
+  it("parses indexed array assignment", () => {
+    expect(parse("arr=([0]=x [1]=y)")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          assignments: [
+            assign("arr", undefined, {
+              array: arrayExpr(arrayElem("x", "0"), arrayElem("y", "1")),
+            }),
+          ],
+        }),
+      ),
+    });
+  });
+
+  it("parses associative array assignment", () => {
+    expect(parse("arr=([key]=val [other]=thing)")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          assignments: [
+            assign("arr", undefined, {
+              array: arrayExpr(
+                arrayElem("val", "key"),
+                arrayElem("thing", "other"),
+              ),
+            }),
+          ],
+        }),
+      ),
+    });
+  });
+
+  it("parses empty array", () => {
+    expect(parse("arr=()")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          assignments: [assign("arr", undefined, { array: arrayExpr() })],
+        }),
+      ),
+    });
+  });
+
+  it("parses append array", () => {
+    expect(parse("arr+=(x y)")).toEqual({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          assignments: [
+            assign("arr", undefined, {
+              append: true,
+              array: arrayExpr(arrayElem("x"), arrayElem("y")),
+            }),
+          ],
+        }),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 25: c-style for loop)", () => {
+  it("parses c-style for loop", () => {
+    const result = parse("for ((i=0; i<10; i++)); do echo $i; done");
+    expect(result.ast.body).toHaveLength(1);
+    const command = result.ast.body[0]?.command as CStyleLoop;
+    expect(command.type).toBe("CStyleLoop");
+    expect(command.init).toBe("i=0");
+    expect(command.cond).toBe("i<10");
+    expect(command.post).toBe("i++");
+    expect(command.body).toHaveLength(1);
+  });
+
+  it("parses c-style for loop with empty parts", () => {
+    expect(parse("for ((;;)); do echo loop; done")).toEqual({
+      ast: program(stmt(cStyleLoop([stmt(simple("echo", "loop"))]))),
+    });
+  });
+
+  it("parses c-style for loop with only condition", () => {
+    const result = parse("for (( ; i<5; )); do echo $i; done");
+    const command = result.ast.body[0]?.command as CStyleLoop;
+    expect(command.type).toBe("CStyleLoop");
+    expect(command.init).toBeUndefined();
+    expect(command.cond).toBe("i<5");
+    expect(command.post).toBeUndefined();
+    expect(command.body).toHaveLength(1);
+  });
+});
+
+describe("parse (phase 26: let clause)", () => {
+  it("parses let with single expression", () => {
+    expect(parse("let i++")).toEqual({
+      ast: program(stmt(letClause([word("i++")]))),
+    });
+  });
+
+  it("parses let with multiple expressions", () => {
+    expect(parse("let i++ j=2")).toEqual({
+      ast: program(stmt(letClause([word("i++"), word("j=2")]))),
+    });
+  });
+
+  it("parses let with redirect", () => {
+    expect(parse("let x=1 2>/dev/null")).toEqual({
+      ast: program(
+        stmt(letClause([word("x=1")], [redirect(">", "/dev/null", "2")])),
+      ),
+    });
+  });
+});
+
+describe("parse (phase 27: comments)", () => {
+  it("does not include comments by default", () => {
+    const result = parse("echo hi # a comment");
+    expect(result.ast.comments).toBeUndefined();
+  });
+
+  it("collects comments when keepComments is true", () => {
+    const result = parse("echo hi # a comment", { keepComments: true });
+    expect(result.ast.comments).toEqual([
+      { type: "Comment", text: " a comment" },
+    ]);
+  });
+
+  it("collects multiple comments", () => {
+    const result = parse("# first\necho hi\n# second", {
+      keepComments: true,
+    });
+    expect(result.ast.comments).toEqual([
+      { type: "Comment", text: " first" },
+      { type: "Comment", text: " second" },
+    ]);
+  });
+
+  it("collects inline comment after semicolon", () => {
+    const result = parse("echo hi; # trailing", { keepComments: true });
+    expect(result.ast.comments).toEqual([
+      { type: "Comment", text: " trailing" },
+    ]);
   });
 });
 

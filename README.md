@@ -21,6 +21,8 @@ The parser returns a `Program` node containing `Statement` nodes. Each statement
 - `IfClause`, `WhileClause`, `ForClause`, `SelectClause`, `CaseClause`
 - `FunctionDecl`, `Subshell`, `Block`
 - `TestClause` (`[[ ]]`), `ArithCmd` (`(( ))`), `CoprocClause`, `TimeClause`
+- `DeclClause` (`declare`, `local`, `export`, `readonly`, `typeset`, `nameref`)
+- `LetClause` (`let`), `CStyleLoop` (`for (( ; ; ))`)
 
 Words contain typed parts: `Literal`, `SglQuoted`, `DblQuoted`, `ParamExp`, `CmdSubst`, `ArithExp`, `ProcSubst`.
 
@@ -66,57 +68,22 @@ extractCommandNames(ast); // ["grep", "head"]
 - Process substitution (`<(cmd)`, `>(cmd)`)
 - Heredocs (`<<`, `<<-`), herestrings (`<<<`)
 - All redirect operators (`>`, `>>`, `<`, `>&`, `<&`, `<>`, `>|`, `&>`, `&>>`)
-- Assignments (`FOO=bar cmd`)
-- Control flow: `if/elif/else/fi`, `while/until`, `for/in`, `select/in`, `case/esac`
+- Assignments (`FOO=bar cmd`), append assignments (`FOO+=bar`)
+- Array expressions (`arr=(a b c)`, `arr=([0]=x [1]=y)`)
+- Declaration builtins as special forms (`declare`, `local`, `export`, `readonly`, `typeset`, `nameref`)
+- `let` expressions (`let i++ j=2`)
+- Control flow: `if/elif/else/fi`, `while/until`, `for/in`, `for ((...))`, `select/in`, `case/esac`
 - Functions (`foo() {}`, `function foo {}`)
 - Subshells `()`, blocks `{}`
 - `[[ ]]` test expressions, `(( ))` arithmetic commands
 - `coproc`, `time`, negation (`!`)
-- Comments, backslash line continuations, background (`&`), semicolons
+- Comments (optionally preserved via `keepComments` option), backslash line continuations, background (`&`), semicolons
 
 ## Install
-
-### From a public GitHub repo (no registry needed)
-
-The simplest approach. Requires the repo to be pushed to GitHub:
 
 ```bash
 pnpm add github:aliou/sh
 ```
-
-This clones the repo and runs the `prepack` script, which builds `dist/`. Pin a specific commit or tag:
-
-```bash
-pnpm add github:aliou/sh#v0.1.0
-pnpm add github:aliou/sh#bbf1d86
-```
-
-### From a GitHub release tarball
-
-Attach the built `.tgz` to a GitHub release, then:
-
-```bash
-pnpm add https://github.com/aliou/sh/releases/download/v0.1.0/aliou-sh-0.1.0.tgz
-```
-
-To create the tarball locally:
-
-```bash
-pnpm build && pnpm pack
-# produces aliou-sh-0.0.1.tgz
-```
-
-### From npm (npmjs.com)
-
-If published to npm:
-
-```bash
-pnpm add @aliou/sh
-```
-
-### From GitHub Packages
-
-Requires a `GITHUB_TOKEN` for all consumers, even if the package is public. Probably not worth the friction unless the repo is private.
 
 ## Development
 
@@ -132,14 +99,13 @@ pnpm check       # biome format + lint
 pnpm build       # rolldown + tsc declarations
 ```
 
-### Git hooks
-
-- **pre-commit**: staged file formatting/linting (biome) + typecheck
+Git hooks (via husky):
+- **pre-commit**: staged file formatting/linting + typecheck
 - **pre-push**: tests
 
 ## Status
 
-Work in progress. The parser covers the common Bash subset needed for AST-based command analysis (e.g., guardrail enforcement). Not yet a complete POSIX/Bash parser.
+Work in progress. Covers the Bash subset needed for AST-based command analysis (command classification, variable mutation tracking, guardrail enforcement). Not yet a complete POSIX/Bash parser -- notably missing: position tracking in AST nodes, extended globbing, and full arithmetic expression parsing.
 
 ## License
 
