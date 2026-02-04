@@ -1,6 +1,6 @@
 {
+  "packages": ["~/code/src/378labs.dev/skills/packages/node"],
   "skills": [
-    "~/code/src/378labs.dev/skills/skills/shared/vitest",
     "~/code/src/378labs.dev/skills/skills/tools/osgrep",
     "~/code/src/378labs.dev/skills/skills/nix/nix-environments"
   ]
