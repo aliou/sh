@@ -38,6 +38,17 @@ export type ProcSubst = Located & {
   op: "<" | ">";
   stmts: Statement[];
 };
+/**
+ * A Bash brace expansion such as `{a,b}` or `{1..5}`. Only present after
+ * calling `splitBraces` on a word — the parser does not produce these by
+ * default, mirroring mvdan/sh's `SplitBraces`.
+ */
+export type BraceExp = Located & {
+  type: "BraceExp";
+  elems: Word[];
+  /** True for sequences like `{1..5}`; false for lists like `{a,b}`. */
+  sequence?: boolean;
+};
 export type WordPart =
   | Literal
   | SglQuoted
@@ -45,7 +56,8 @@ export type WordPart =
   | ParamExp
   | CmdSubst
   | ArithExp
-  | ProcSubst;
+  | ProcSubst
+  | BraceExp;
 export type Word = Located & { type: "Word"; parts: WordPart[] };
 export type Assignment = Located & {
   type: "Assignment";
