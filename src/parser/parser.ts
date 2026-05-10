@@ -126,6 +126,38 @@ export class Parser {
     private readonly options: ParseOptions = {},
   ) {}
 
+  /** Yield each top-level statement as it's parsed. */
+  *statementsSeq(): Generator<Statement> {
+    this.skipSeparators();
+    while (!this.isEof()) {
+      yield this.parseStatement();
+      this.skipSeparators();
+    }
+  }
+
+  /** Yield each word token as a Word, ignoring statement structure. */
+  *wordsSeq(): Generator<Word> {
+    while (!this.isEof()) {
+      const tok = this.peek();
+      if (!tok) break;
+      if (
+        tok.type === "op" ||
+        tok.type === "redir" ||
+        tok.type === "symbol" ||
+        tok.type === "heredoc-body" ||
+        tok.type === "comment" ||
+        tok.type === "arith-cmd"
+      ) {
+        // Skip non-word tokens; useful for argv-style sources where we
+        // only care about the word stream.
+        this.consume();
+        continue;
+      }
+      this.consume();
+      yield this.wordFromToken(tok);
+    }
+  }
+
   parseProgram(): Program {
     const body: Statement[] = [];
     this.skipSeparators();
