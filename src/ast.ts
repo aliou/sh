@@ -24,12 +24,78 @@ type Located = { pos?: Pos; end?: Pos };
 export type Literal = Located & { type: "Literal"; value: string };
 export type SglQuoted = Located & { type: "SglQuoted"; value: string };
 export type DblQuoted = Located & { type: "DblQuoted"; parts: WordPart[] };
+/**
+ * Operator inside the `exp` of a ParamExp. Mirrors the set of
+ * single/double-character ops supported by Bash and friends.
+ *
+ *   default/alt: -, :-, +, :+, =, :=, ?, :?
+ *   pattern strip: #, ##, %, %%
+ *   case mod: ^, ^^, ,, ,,
+ *   transformation (Bash 4.4+): @U, @u, @L, @Q, @E, @P, @A, @K, @k, @a
+ */
+export type ParamExpOp =
+  | "-"
+  | ":-"
+  | "+"
+  | ":+"
+  | "="
+  | ":="
+  | "?"
+  | ":?"
+  | "#"
+  | "##"
+  | "%"
+  | "%%"
+  | "^"
+  | "^^"
+  | ","
+  | ",,"
+  | "@U"
+  | "@u"
+  | "@L"
+  | "@Q"
+  | "@E"
+  | "@P"
+  | "@A"
+  | "@K"
+  | "@k"
+  | "@a";
+
+export type ParamExpExpansion = {
+  op: ParamExpOp;
+  word?: Word;
+};
+
+export type ParamExpSlice = {
+  offset: Word;
+  length?: Word;
+};
+
+export type ParamExpReplace = {
+  /** True for `${var//pat/with}` (replace every match). */
+  all?: boolean;
+  /** True for `${var/#pat/with}` (anchor at start). */
+  prefix?: boolean;
+  /** True for `${var/%pat/with}` (anchor at end). */
+  suffix?: boolean;
+  orig: Word;
+  with?: Word;
+};
+
 export type ParamExp = Located & {
   type: "ParamExp";
+  /** True for the short form `$var`; false for `${var}`. */
   short: boolean;
+  /** True for `${!var}` (indirect). */
+  excl?: boolean;
+  /** True for `${#var}` (string length). */
+  length?: boolean;
   param: Literal;
-  op?: string;
-  value?: Word;
+  /** Index inside `[...]`, e.g. `${arr[0]}` or `${arr[@]}`. */
+  index?: Word;
+  slice?: ParamExpSlice;
+  replace?: ParamExpReplace;
+  exp?: ParamExpExpansion;
 };
 export type CmdSubst = Located & { type: "CmdSubst"; stmts: Statement[] };
 export type ArithExp = Located & { type: "ArithExp"; expr: string };

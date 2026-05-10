@@ -15,6 +15,7 @@ import type {
   IfClause,
   LetClause,
   ParamExp,
+  ParamExpOp,
   ParseOptions,
   Pos,
   Program,
@@ -41,6 +42,15 @@ import { tokenize } from "../tokenizer/tokenize";
 import { DECL_KEYWORDS } from "./constants";
 
 const ZERO_POS: Pos = { offset: 0, line: 1, col: 1 };
+
+/**
+ * Wrap a raw substring (e.g. a slice offset or a replacement pattern) as a
+ * single-literal Word. The string was extracted from inside `${...}` so it
+ * has no inner expansions to recurse into.
+ */
+function strToWord(value: string): Word {
+  return { type: "Word", parts: [{ type: "Literal", value }] };
+}
 
 export class Parser {
   private index = 0;
@@ -896,25 +906,8 @@ export class Parser {
           pos: part.pos,
           end: part.end,
         };
-      case "param": {
-        const paramExp: ParamExp = {
-          type: "ParamExp",
-          short: !part.braced,
-          param: { type: "Literal", value: part.name },
-          pos: part.pos,
-          end: part.end,
-        };
-        if (part.op) {
-          paramExp.op = part.op;
-        }
-        if (part.value !== undefined) {
-          paramExp.value = {
-            type: "Word",
-            parts: [{ type: "Literal", value: part.value }],
-          };
-        }
-        return paramExp;
-      }
+      case "param":
+        return this.convertParamExp(part);
       case "cmd-subst": {
         const innerTokens = tokenize(part.raw);
         const innerParser = new Parser(innerTokens);
@@ -965,6 +958,49 @@ export class Parser {
           end: part.end,
         };
     }
+  }
+
+  private convertParamExp(part: TokenWordPart & { type: "param" }): ParamExp {
+    const out: ParamExp = {
+      type: "ParamExp",
+      short: !part.braced,
+      param: { type: "Literal", value: part.name },
+      pos: part.pos,
+      end: part.end,
+    };
+    if (part.length) out.length = true;
+    if (part.excl) out.excl = true;
+    if (part.index !== undefined) {
+      out.index = strToWord(part.index);
+    }
+    if (part.slice) {
+      const slice: ParamExp["slice"] = {
+        offset: strToWord(part.slice.offset),
+      };
+      if (part.slice.length !== undefined) {
+        slice.length = strToWord(part.slice.length);
+      }
+      out.slice = slice;
+    }
+    if (part.replace) {
+      const r: ParamExp["replace"] = {
+        orig: strToWord(part.replace.orig),
+      };
+      if (part.replace.with !== undefined)
+        r.with = strToWord(part.replace.with);
+      if (part.replace.all) r.all = true;
+      if (part.replace.prefix) r.prefix = true;
+      if (part.replace.suffix) r.suffix = true;
+      out.replace = r;
+    }
+    if (part.exp) {
+      const exp: ParamExp["exp"] = {
+        op: part.exp.op as ParamExpOp,
+      };
+      if (part.exp.value !== undefined) exp.word = strToWord(part.exp.value);
+      out.exp = exp;
+    }
+    return out;
   }
 
   private wordFromToken(token: Token & { type: "word" }): Word {

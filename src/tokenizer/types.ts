@@ -15,8 +15,18 @@ export type TokenWordPart =
       type: "param";
       name: string;
       braced: boolean;
-      op?: string;
-      value?: string;
+      excl?: boolean;
+      length?: boolean;
+      index?: string;
+      slice?: { offset: string; length?: string };
+      replace?: {
+        all?: boolean;
+        prefix?: boolean;
+        suffix?: boolean;
+        orig: string;
+        with?: string;
+      };
+      exp?: { op: string; value?: string };
     })
   | (WithPos & { type: "cmd-subst"; raw: string; innerOffset: number })
   | (WithPos & { type: "arith-exp"; raw: string; innerOffset: number })
