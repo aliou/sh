@@ -224,15 +224,45 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
     }
 
     if (symbolChars.has(ch)) {
-      tokens.push({
-        type: "symbol",
-        value: ch as SymbolTokenValue,
-        pos: map.posAt(i),
-        end: map.posAt(i + 1),
-      });
-      atBoundary = true;
-      i += 1;
-      continue;
+      // `{` is only a block-start when at a boundary AND followed by a
+      // separator (whitespace, `;`, newline, EOF). Otherwise it's part of
+      // a word — for example a brace expansion like `{a,b}`. `}` is only a
+      // symbol at a boundary; mid-word it's a literal char that scanning
+      // continues through.
+      if (ch === "{") {
+        const next = source.charAt(i + 1);
+        const isBlockOpen =
+          atBoundary &&
+          (next === "" ||
+            next === " " ||
+            next === "\t" ||
+            next === "\n" ||
+            next === "\r" ||
+            next === ";");
+        if (!isBlockOpen) {
+          // Fall through to word parsing.
+        } else {
+          tokens.push({
+            type: "symbol",
+            value: "{",
+            pos: map.posAt(i),
+            end: map.posAt(i + 1),
+          });
+          atBoundary = true;
+          i += 1;
+          continue;
+        }
+      } else {
+        tokens.push({
+          type: "symbol",
+          value: ch as SymbolTokenValue,
+          pos: map.posAt(i),
+          end: map.posAt(i + 1),
+        });
+        atBoundary = true;
+        i += 1;
+        continue;
+      }
     }
 
     if (source.startsWith("&&", i)) {
@@ -313,10 +343,14 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
         currentChar === "\n" ||
         operatorChars.has(currentChar) ||
         redirChars.has(currentChar) ||
-        symbolChars.has(currentChar)
+        currentChar === "(" ||
+        currentChar === ")"
       ) {
         break;
       }
+      // `{` and `}` are deliberately NOT word-terminators: mid-word braces
+      // are part of the literal (a brace expansion candidate). Block
+      // delimiters are detected at the outer loop based on context.
 
       if (currentChar === "'") {
         flushLit();
