@@ -49,6 +49,18 @@ export type BraceExp = Located & {
   /** True for sequences like `{1..5}`; false for lists like `{a,b}`. */
   sequence?: boolean;
 };
+/** The two-character open of an extended glob pattern. */
+export type ExtGlobOp = "?(" | "*(" | "+(" | "@(" | "!(";
+/**
+ * A Bash extended glob like `@(foo|bar)`. The pattern is captured raw —
+ * alternations and nested groups are part of the string. Only emitted
+ * for Bash/mksh dialects.
+ */
+export type ExtGlob = Located & {
+  type: "ExtGlob";
+  op: ExtGlobOp;
+  pattern: string;
+};
 export type WordPart =
   | Literal
   | SglQuoted
@@ -57,7 +69,8 @@ export type WordPart =
   | CmdSubst
   | ArithExp
   | ProcSubst
-  | BraceExp;
+  | BraceExp
+  | ExtGlob;
 export type Word = Located & { type: "Word"; parts: WordPart[] };
 export type Assignment = Located & {
   type: "Assignment";

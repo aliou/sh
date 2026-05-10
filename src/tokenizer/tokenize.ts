@@ -3,6 +3,7 @@ import { isDigit, operatorChars, redirChars, symbolChars } from "./charsets";
 import { SourceMap } from "./cursor";
 import { scanBacktick } from "./scan-backtick";
 import { scanExpansion } from "./scan-expansion";
+import { scanExtGlob } from "./scan-extglob";
 import { tryRedirOp } from "./scan-redir";
 import type { SymbolTokenValue, Token, TokenWordPart } from "./types";
 import { tokenPartsText } from "./utils";
@@ -119,15 +120,20 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
     }
 
     if (ch === "!" && atBoundary) {
-      tokens.push({
-        type: "op",
-        value: "!",
-        pos: map.posAt(i),
-        end: map.posAt(i + 1),
-      });
-      atBoundary = true;
-      i += 1;
-      continue;
+      // Prefer the extended-glob form `!(...)` over the negation operator,
+      // matching Bash where `!` only negates a command when it's a standalone
+      // word.
+      if (source.charAt(i + 1) !== "(") {
+        tokens.push({
+          type: "op",
+          value: "!",
+          pos: map.posAt(i),
+          end: map.posAt(i + 1),
+        });
+        atBoundary = true;
+        i += 1;
+        continue;
+      }
     }
 
     if (isDigit(ch)) {
@@ -331,6 +337,26 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       if (currentChar === "\\" && source.charAt(i + 1) === "\r") {
         if (source.charAt(i + 2) === "\n") {
           i += 3;
+          litStart = i;
+          continue;
+        }
+      }
+
+      // Try to recognize an extended glob (`?(`, `*(`, `+(`, `@(`, `!(`)
+      // before the break check, since `(` is otherwise a word terminator.
+      if (
+        (currentChar === "?" ||
+          currentChar === "*" ||
+          currentChar === "+" ||
+          currentChar === "@" ||
+          currentChar === "!") &&
+        source.charAt(i + 1) === "("
+      ) {
+        const eg = scanExtGlob(source, i, map);
+        if (eg) {
+          flushLit();
+          parts.push(eg.part);
+          i = eg.end;
           litStart = i;
           continue;
         }

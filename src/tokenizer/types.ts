@@ -26,7 +26,12 @@ export type TokenWordPart =
       raw: string;
       innerOffset: number;
     })
-  | (WithPos & { type: "backtick"; raw: string; innerOffset: number });
+  | (WithPos & { type: "backtick"; raw: string; innerOffset: number })
+  | (WithPos & {
+      type: "ext-glob";
+      op: "?(" | "*(" | "+(" | "@(" | "!(";
+      pattern: string;
+    });
 
 export type Token =
   | (WithPos & { type: "word"; parts: TokenWordPart[] })
