@@ -181,15 +181,47 @@ describe("parse (phase 13: extended test)", () => {
 
 describe("parse (phase 14: arithmetic command)", () => {
   it("parses (( ))", () => {
-    expect(parse("(( x + 1 ))")).toMatchAst({
-      ast: program(stmt(arithCmd("x + 1"))),
-    });
+    const { ast } = parse("(( x + 1 ))");
+    const cmd = ast.body[0]?.command;
+    expect(cmd?.type).toBe("ArithCmd");
+    if (cmd?.type === "ArithCmd") {
+      expect(cmd.x).toMatchAst({
+        type: "BinaryArithm",
+        op: "+",
+        x: {
+          type: "ParamExp",
+          short: true,
+          param: { type: "Literal", value: "x" },
+        },
+        y: { type: "ArithLit", value: "1" },
+      });
+    }
   });
 
   it("parses nested parens in (( ))", () => {
-    expect(parse("(( (x + 1) * 2 ))")).toMatchAst({
-      ast: program(stmt(arithCmd("(x + 1) * 2"))),
-    });
+    const { ast } = parse("(( (x + 1) * 2 ))");
+    const cmd = ast.body[0]?.command;
+    expect(cmd?.type).toBe("ArithCmd");
+    if (cmd?.type === "ArithCmd") {
+      expect(cmd.x).toMatchAst({
+        type: "BinaryArithm",
+        op: "*",
+        x: {
+          type: "ParenArithm",
+          x: {
+            type: "BinaryArithm",
+            op: "+",
+            x: {
+              type: "ParamExp",
+              short: true,
+              param: { type: "Literal", value: "x" },
+            },
+            y: { type: "ArithLit", value: "1" },
+          },
+        },
+        y: { type: "ArithLit", value: "2" },
+      });
+    }
   });
 });
 

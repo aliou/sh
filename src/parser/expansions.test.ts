@@ -108,13 +108,19 @@ describe("parse (phase 16: command substitution)", () => {
 
 describe("parse (phase 17: arithmetic expansion)", () => {
   it("parses $((expr))", () => {
-    expect(parse("echo $((1 + 2))")).toMatchAst({
-      ast: program(
-        stmt({
-          type: "SimpleCommand",
-          words: [word("echo"), wordParts(arithExp("1 + 2"))],
-        }),
-      ),
+    const { ast } = parse("echo $((1 + 2))");
+    const cmd = ast.body[0]?.command;
+    if (cmd?.type !== "SimpleCommand")
+      throw new Error("expected SimpleCommand");
+    const expansion = cmd.words?.[1]?.parts[0];
+    expect(expansion).toMatchAst({
+      type: "ArithExp",
+      x: {
+        type: "BinaryArithm",
+        op: "+",
+        x: { type: "ArithLit", value: "1" },
+        y: { type: "ArithLit", value: "2" },
+      },
     });
   });
 });

@@ -98,7 +98,72 @@ export type ParamExp = Located & {
   exp?: ParamExpExpansion;
 };
 export type CmdSubst = Located & { type: "CmdSubst"; stmts: Statement[] };
-export type ArithExp = Located & { type: "ArithExp"; expr: string };
+
+/** A literal in arithmetic context (numeric or hex/octal). */
+export type ArithLit = Located & { type: "ArithLit"; value: string };
+/** Binary arithmetic operator. */
+export type BinaryArithmOp =
+  | "+"
+  | "-"
+  | "*"
+  | "/"
+  | "%"
+  | "**"
+  | "=="
+  | "!="
+  | "<"
+  | "<="
+  | ">"
+  | ">="
+  | "&&"
+  | "||"
+  | "&"
+  | "|"
+  | "^"
+  | "<<"
+  | ">>"
+  | "="
+  | "+="
+  | "-="
+  | "*="
+  | "/="
+  | "%="
+  | "**="
+  | "&="
+  | "|="
+  | "^="
+  | "<<="
+  | ">>="
+  | ","
+  | "?"
+  | ":";
+/** Unary arithmetic operator. `post` distinguishes pre- and post-fix `++`/`--`. */
+export type UnaryArithmOp = "+" | "-" | "!" | "~" | "++" | "--";
+export type BinaryArithm = Located & {
+  type: "BinaryArithm";
+  op: BinaryArithmOp;
+  x: ArithExpr;
+  y: ArithExpr;
+};
+export type UnaryArithm = Located & {
+  type: "UnaryArithm";
+  op: UnaryArithmOp;
+  /** True for postfix `i++`/`i--`. */
+  post?: boolean;
+  x: ArithExpr;
+};
+export type ParenArithm = Located & {
+  type: "ParenArithm";
+  x: ArithExpr;
+};
+/** An arithmetic expression: literal, variable expansion, parens, or operator. */
+export type ArithExpr =
+  | ArithLit
+  | ParamExp
+  | BinaryArithm
+  | UnaryArithm
+  | ParenArithm;
+export type ArithExp = Located & { type: "ArithExp"; x: ArithExpr };
 export type ProcSubst = Located & {
   type: "ProcSubst";
   op: "<" | ">";
@@ -220,7 +285,7 @@ export type CaseClause = Located & {
 };
 export type TimeClause = Located & { type: "TimeClause"; command: Statement };
 export type TestClause = Located & { type: "TestClause"; expr: Word[] };
-export type ArithCmd = Located & { type: "ArithCmd"; expr: string };
+export type ArithCmd = Located & { type: "ArithCmd"; x: ArithExpr };
 export type CoprocClause = Located & {
   type: "CoprocClause";
   name?: string;
@@ -240,9 +305,9 @@ export type LetClause = Located & {
 };
 export type CStyleLoop = Located & {
   type: "CStyleLoop";
-  init?: string;
-  cond?: string;
-  post?: string;
+  init?: ArithExpr;
+  cond?: ArithExpr;
+  post?: ArithExpr;
   body: Statement[];
 };
 export type CommentNode = Located & { type: "Comment"; text: string };
