@@ -1,4 +1,5 @@
 import type { ParseOptions } from "../ast";
+import { checkLang } from "../dialect";
 import { isDigit, operatorChars, redirChars, symbolChars } from "./charsets";
 import { SourceMap } from "./cursor";
 import { scanBacktick } from "./scan-backtick";
@@ -183,6 +184,11 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       source.charAt(i + 1) === "(" &&
       atBoundary
     ) {
+      checkLang(options.dialect, map.posAt(i), "process substitution", [
+        "bash",
+        "mksh",
+        "zsh",
+      ]);
       const op = ch as "<" | ">";
       let j = i + 2;
       let depth = 1;
@@ -217,6 +223,13 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
     {
       const redir = tryRedirOp(source, i);
       if (redir) {
+        if (redir.op === "&>" || redir.op === "&>>" || redir.op === "<<<") {
+          checkLang(options.dialect, map.posAt(i), redir.op, [
+            "bash",
+            "mksh",
+            "zsh",
+          ]);
+        }
         tokens.push({
           type: "redir",
           op: redir.op,
@@ -354,6 +367,11 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       ) {
         const eg = scanExtGlob(source, i, map);
         if (eg) {
+          checkLang(options.dialect, map.posAt(i), "extended globbing", [
+            "bash",
+            "mksh",
+            "zsh",
+          ]);
           flushLit();
           parts.push(eg.part);
           i = eg.end;
@@ -439,7 +457,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
           }
           if (dqChar === "$") {
             flushDblLit();
-            const exp = scanExpansion(source, i, map);
+            const exp = scanExpansion(source, i, map, options);
             if (exp) {
               dblParts.push(exp.part);
               i = exp.end;
@@ -481,7 +499,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       }
 
       if (currentChar === "$") {
-        const exp = scanExpansion(source, i, map);
+        const exp = scanExpansion(source, i, map, options);
         if (exp) {
           flushLit();
           parts.push(exp.part);
