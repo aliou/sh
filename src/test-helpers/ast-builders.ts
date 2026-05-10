@@ -228,11 +228,16 @@ export const caseClause = (
   items,
   ...P,
 });
-export const testClause = (...words: Word[]): TestClause => ({
-  type: "TestClause",
-  expr: words,
-  ...P,
-});
+/**
+ * Build a TestClause whose `x` is the first word (or a Word wrapping it).
+ * The structured form uses a TestExpr tree; this helper is intended for
+ * fixtures with simple single-word bodies. For complex shapes, hand-build
+ * the AST directly.
+ */
+export const testClause = (...words: Word[]): TestClause => {
+  const first = words[0] ?? { type: "Word", parts: [], ...P };
+  return { type: "TestClause", x: first, ...P };
+};
 export const arithCmd = (value: string): ArithCmd => ({
   type: "ArithCmd",
   x: { type: "ArithLit", value, ...P },
