@@ -39,6 +39,7 @@ import type {
 } from "../tokenizer";
 import { tokenPartsText } from "../tokenizer";
 import { tokenize } from "../tokenizer/tokenize";
+import { parseArithmetic } from "./arith-parser";
 import { DECL_KEYWORDS } from "./constants";
 
 const ZERO_POS: Pos = { offset: 0, line: 1, col: 1 };
@@ -50,6 +51,24 @@ const ZERO_POS: Pos = { offset: 0, line: 1, col: 1 };
  */
 function strToWord(value: string): Word {
   return { type: "Word", parts: [{ type: "Literal", value }] };
+}
+
+/** Split `s` on `delim`, ignoring delimiters nested inside parentheses. */
+function splitAtTopLevel(s: string, delim: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === "(") depth++;
+    else if (c === ")") depth--;
+    else if (c === delim && depth === 0) {
+      parts.push(s.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(s.slice(start));
+  return parts;
 }
 
 export class Parser {
@@ -397,11 +416,35 @@ export class Parser {
       "mksh",
       "zsh",
     ]);
-    // Split expr on ";" into init, cond, post
-    const parts = token.expr.split(";").map((s) => s.trim());
-    const init = parts[0] || undefined;
-    const cond = parts[1] || undefined;
-    const post = parts[2] || undefined;
+
+    // Split inner on `;` boundaries (top-level only) and parse each piece
+    // as its own arithmetic expression. Empty clauses are allowed.
+    const segments = splitAtTopLevel(token.expr, ";");
+    const segmentsRaw = segments.map((s) => s.trim());
+    const init = segmentsRaw[0]
+      ? parseArithmetic(
+          segmentsRaw[0],
+          token.innerOffset,
+          token.pos.line,
+          token.pos.col + 2,
+        )
+      : undefined;
+    const cond = segmentsRaw[1]
+      ? parseArithmetic(
+          segmentsRaw[1],
+          token.innerOffset,
+          token.pos.line,
+          token.pos.col + 2,
+        )
+      : undefined;
+    const post = segmentsRaw[2]
+      ? parseArithmetic(
+          segmentsRaw[2],
+          token.innerOffset,
+          token.pos.line,
+          token.pos.col + 2,
+        )
+      : undefined;
 
     if (this.matchOp(";")) {
       this.consume();
@@ -599,9 +642,18 @@ export class Parser {
       "mksh",
       "zsh",
     ]);
+    const x = parseArithmetic(
+      token.expr,
+      token.innerOffset,
+      token.pos.line,
+      token.pos.col + 2,
+    );
+    if (!x) {
+      throw new Error("Empty arithmetic command");
+    }
     return {
       type: "ArithCmd",
-      expr: token.expr,
+      x,
       pos: token.pos,
       end: token.end,
     };
@@ -919,13 +971,23 @@ export class Parser {
           end: part.end,
         };
       }
-      case "arith-exp":
+      case "arith-exp": {
+        const x = parseArithmetic(
+          part.raw,
+          part.innerOffset,
+          part.pos.line,
+          part.pos.col + 3,
+        );
+        if (!x) {
+          throw new Error("Empty arithmetic expansion");
+        }
         return {
           type: "ArithExp",
-          expr: part.raw,
+          x,
           pos: part.pos,
           end: part.end,
         };
+      }
       case "proc-subst": {
         const innerTokens = tokenize(part.raw);
         const innerParser = new Parser(innerTokens);

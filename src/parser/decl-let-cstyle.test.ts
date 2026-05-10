@@ -232,9 +232,36 @@ describe("parse (phase 25: c-style for loop)", () => {
     assert(first, "expected at least one statement");
     const command = first.command;
     assert(command.type === "CStyleLoop", "expected CStyleLoop");
-    expect(command.init).toBe("i=0");
-    expect(command.cond).toBe("i<10");
-    expect(command.post).toBe("i++");
+    expect(command.init).toMatchAst({
+      type: "BinaryArithm",
+      op: "=",
+      x: {
+        type: "ParamExp",
+        short: true,
+        param: { type: "Literal", value: "i" },
+      },
+      y: { type: "ArithLit", value: "0" },
+    });
+    expect(command.cond).toMatchAst({
+      type: "BinaryArithm",
+      op: "<",
+      x: {
+        type: "ParamExp",
+        short: true,
+        param: { type: "Literal", value: "i" },
+      },
+      y: { type: "ArithLit", value: "10" },
+    });
+    expect(command.post).toMatchAst({
+      type: "UnaryArithm",
+      op: "++",
+      post: true,
+      x: {
+        type: "ParamExp",
+        short: true,
+        param: { type: "Literal", value: "i" },
+      },
+    });
     expect(command.body).toHaveLength(1);
   });
 
@@ -251,7 +278,16 @@ describe("parse (phase 25: c-style for loop)", () => {
     const command = first.command;
     assert(command.type === "CStyleLoop", "expected CStyleLoop");
     expect(command.init).toBeUndefined();
-    expect(command.cond).toBe("i<5");
+    expect(command.cond).toMatchAst({
+      type: "BinaryArithm",
+      op: "<",
+      x: {
+        type: "ParamExp",
+        short: true,
+        param: { type: "Literal", value: "i" },
+      },
+      y: { type: "ArithLit", value: "5" },
+    });
     expect(command.post).toBeUndefined();
     expect(command.body).toHaveLength(1);
   });

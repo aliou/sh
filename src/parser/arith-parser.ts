@@ -1,0 +1,360 @@
+import type {
+  ArithExpr,
+  BinaryArithm,
+  BinaryArithmOp,
+  ParamExp,
+  Pos,
+  UnaryArithm,
+  UnaryArithmOp,
+} from "../ast";
+
+/**
+ * Parse a Bash arithmetic expression (the inside of `(( ... ))` or
+ * `$(( ... ))` or each clause of a C-style for loop) into an `ArithExpr`
+ * tree.
+ *
+ * `baseOffset` is the offset of the first character of `source` within the
+ * containing parser's source string, so that positions on returned nodes
+ * are absolute to the original input.
+ *
+ * Returns `undefined` for an empty/whitespace-only input.
+ */
+export function parseArithmetic(
+  source: string,
+  baseOffset: number,
+  baseLine: number,
+  baseCol: number,
+): ArithExpr | undefined {
+  const tokens = tokenizeArith(source);
+  if (tokens.length === 0) return undefined;
+  const ctx: Ctx = {
+    tokens,
+    index: 0,
+    baseOffset,
+    baseLine,
+    baseCol,
+    source,
+  };
+  const expr = parseExpr(ctx, 0);
+  if (ctx.index < ctx.tokens.length) {
+    const tok = ctx.tokens[ctx.index];
+    throw new Error(`Unexpected token in arithmetic: ${tokDisplay(tok)}`);
+  }
+  return expr;
+}
+
+function tokDisplay(t: ArithTok | undefined): string {
+  if (!t) return "?";
+  if (t.type === "lparen") return "(";
+  if (t.type === "rparen") return ")";
+  return t.value;
+}
+
+/** ===== arithmetic mini-tokenizer ===== */
+
+type ArithTok =
+  | { type: "num"; value: string; offset: number }
+  | { type: "name"; value: string; offset: number }
+  | { type: "op"; value: string; offset: number }
+  | { type: "lparen"; offset: number }
+  | { type: "rparen"; offset: number };
+
+const isAlpha = (c: string) =>
+  (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_";
+const isAlnum = (c: string) => isAlpha(c) || (c >= "0" && c <= "9");
+const isHex = (c: string) =>
+  (c >= "0" && c <= "9") || (c >= "a" && c <= "f") || (c >= "A" && c <= "F");
+
+/** Operators tried longest-first. */
+const OPS = [
+  "<<=",
+  ">>=",
+  "**=",
+  "&&",
+  "||",
+  "==",
+  "!=",
+  "<=",
+  ">=",
+  "<<",
+  ">>",
+  "**",
+  "++",
+  "--",
+  "+=",
+  "-=",
+  "*=",
+  "/=",
+  "%=",
+  "&=",
+  "|=",
+  "^=",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+  "<",
+  ">",
+  "&",
+  "|",
+  "^",
+  "~",
+  "!",
+  "=",
+  ",",
+  "?",
+  ":",
+];
+
+function tokenizeArith(s: string): ArithTok[] {
+  const toks: ArithTok[] = [];
+  let i = 0;
+  while (i < s.length) {
+    const c = s.charAt(i);
+    if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+      i++;
+      continue;
+    }
+    if (c === "(") {
+      toks.push({ type: "lparen", offset: i });
+      i++;
+      continue;
+    }
+    if (c === ")") {
+      toks.push({ type: "rparen", offset: i });
+      i++;
+      continue;
+    }
+    if (c === "$") {
+      // `$name` inside arithmetic is treated as the variable's value;
+      // we keep the leading `$` so the parser can build a ParamExp.
+      let j = i + 1;
+      if (j < s.length && (isAlpha(s.charAt(j)) || /\d/.test(s.charAt(j)))) {
+        while (j < s.length && isAlnum(s.charAt(j))) j++;
+        toks.push({ type: "name", value: s.slice(i + 1, j), offset: i });
+        i = j;
+        continue;
+      }
+    }
+    if (c >= "0" && c <= "9") {
+      let j = i + 1;
+      // 0x.. hex
+      if (c === "0" && (s.charAt(j) === "x" || s.charAt(j) === "X")) {
+        j++;
+        while (j < s.length && isHex(s.charAt(j))) j++;
+      } else {
+        while (j < s.length && /\d/.test(s.charAt(j))) j++;
+      }
+      toks.push({ type: "num", value: s.slice(i, j), offset: i });
+      i = j;
+      continue;
+    }
+    if (isAlpha(c)) {
+      let j = i + 1;
+      while (j < s.length && isAlnum(s.charAt(j))) j++;
+      toks.push({ type: "name", value: s.slice(i, j), offset: i });
+      i = j;
+      continue;
+    }
+    let matched = false;
+    for (const op of OPS) {
+      if (s.startsWith(op, i)) {
+        toks.push({ type: "op", value: op, offset: i });
+        i += op.length;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      throw new Error(
+        `Unexpected character ${JSON.stringify(c)} in arithmetic at offset ${i}`,
+      );
+    }
+  }
+  return toks;
+}
+
+/** ===== precedence table (Bash, low number = lower precedence) ===== */
+
+interface BinInfo {
+  prec: number;
+  rightAssoc?: boolean;
+}
+
+const BIN_INFO: Record<string, BinInfo> = {
+  ",": { prec: 1 },
+  "=": { prec: 2, rightAssoc: true },
+  "+=": { prec: 2, rightAssoc: true },
+  "-=": { prec: 2, rightAssoc: true },
+  "*=": { prec: 2, rightAssoc: true },
+  "/=": { prec: 2, rightAssoc: true },
+  "%=": { prec: 2, rightAssoc: true },
+  "**=": { prec: 2, rightAssoc: true },
+  "&=": { prec: 2, rightAssoc: true },
+  "|=": { prec: 2, rightAssoc: true },
+  "^=": { prec: 2, rightAssoc: true },
+  "<<=": { prec: 2, rightAssoc: true },
+  ">>=": { prec: 2, rightAssoc: true },
+  "?": { prec: 3, rightAssoc: true },
+  ":": { prec: 3, rightAssoc: true },
+  "||": { prec: 4 },
+  "&&": { prec: 5 },
+  "|": { prec: 6 },
+  "^": { prec: 7 },
+  "&": { prec: 8 },
+  "==": { prec: 9 },
+  "!=": { prec: 9 },
+  "<": { prec: 10 },
+  "<=": { prec: 10 },
+  ">": { prec: 10 },
+  ">=": { prec: 10 },
+  "<<": { prec: 11 },
+  ">>": { prec: 11 },
+  "+": { prec: 12 },
+  "-": { prec: 12 },
+  "*": { prec: 13 },
+  "/": { prec: 13 },
+  "%": { prec: 13 },
+  "**": { prec: 14, rightAssoc: true },
+};
+
+const UNARY_PREFIX = new Set(["+", "-", "!", "~", "++", "--"]);
+
+/** ===== parser ===== */
+
+interface Ctx {
+  tokens: ArithTok[];
+  index: number;
+  source: string;
+  baseOffset: number;
+  baseLine: number;
+  baseCol: number;
+}
+
+const peek = (ctx: Ctx) => ctx.tokens[ctx.index];
+const advance = (ctx: Ctx) => ctx.tokens[ctx.index++];
+
+function posOf(ctx: Ctx, offset: number, length = 1): { pos: Pos; end: Pos } {
+  // Compute (line, col) within `ctx.source`, then translate to the
+  // original by adding the base offset/line/col. Newlines inside arithmetic
+  // are unusual; this stays correct for the common single-line case.
+  let line = ctx.baseLine;
+  let col = ctx.baseCol;
+  for (let i = 0; i < offset; i++) {
+    if (ctx.source.charCodeAt(i) === 10 /* \n */) {
+      line += 1;
+      col = 1;
+    } else {
+      col += 1;
+    }
+  }
+  const pos: Pos = { offset: ctx.baseOffset + offset, line, col };
+  let endLine = line;
+  let endCol = col;
+  for (let i = offset; i < offset + length; i++) {
+    if (ctx.source.charCodeAt(i) === 10) {
+      endLine += 1;
+      endCol = 1;
+    } else {
+      endCol += 1;
+    }
+  }
+  const end: Pos = {
+    offset: ctx.baseOffset + offset + length,
+    line: endLine,
+    col: endCol,
+  };
+  return { pos, end };
+}
+
+function parseExpr(ctx: Ctx, minPrec: number): ArithExpr {
+  let left = parseUnary(ctx);
+  while (true) {
+    const tok = peek(ctx);
+    if (!tok || tok.type !== "op") break;
+    const info = BIN_INFO[tok.value];
+    if (!info || info.prec < minPrec) break;
+
+    advance(ctx);
+    const nextMin = info.rightAssoc ? info.prec : info.prec + 1;
+    // Special handling for postfix `++`/`--` is done at primary level.
+    const right = parseExpr(ctx, nextMin);
+    const node: BinaryArithm = {
+      type: "BinaryArithm",
+      op: tok.value as BinaryArithmOp,
+      x: left,
+      y: right,
+      ...posOf(ctx, tok.offset, tok.value.length),
+    };
+    left = node;
+  }
+  return left;
+}
+
+function parseUnary(ctx: Ctx): ArithExpr {
+  const tok = peek(ctx);
+  if (tok && tok.type === "op" && UNARY_PREFIX.has(tok.value)) {
+    advance(ctx);
+    const operand = parseUnary(ctx);
+    const node: UnaryArithm = {
+      type: "UnaryArithm",
+      op: tok.value as UnaryArithmOp,
+      x: operand,
+      ...posOf(ctx, tok.offset, tok.value.length),
+    };
+    return node;
+  }
+  return parsePostfix(ctx);
+}
+
+function parsePostfix(ctx: Ctx): ArithExpr {
+  const expr = parsePrimary(ctx);
+  const tok = peek(ctx);
+  if (tok && tok.type === "op" && (tok.value === "++" || tok.value === "--")) {
+    advance(ctx);
+    const node: UnaryArithm = {
+      type: "UnaryArithm",
+      op: tok.value as UnaryArithmOp,
+      post: true,
+      x: expr,
+      ...posOf(ctx, tok.offset, tok.value.length),
+    };
+    return node;
+  }
+  return expr;
+}
+
+function parsePrimary(ctx: Ctx): ArithExpr {
+  const tok = advance(ctx);
+  if (!tok) throw new Error("Unexpected end of arithmetic expression");
+  if (tok.type === "num") {
+    return {
+      type: "ArithLit",
+      value: tok.value,
+      ...posOf(ctx, tok.offset, tok.value.length),
+    };
+  }
+  if (tok.type === "name") {
+    const param: ParamExp = {
+      type: "ParamExp",
+      short: true,
+      param: { type: "Literal", value: tok.value },
+      ...posOf(ctx, tok.offset, tok.value.length),
+    };
+    return param;
+  }
+  if (tok.type === "lparen") {
+    const inner = parseExpr(ctx, 0);
+    const next = advance(ctx);
+    if (!next || next.type !== "rparen") {
+      throw new Error("Expected closing paren in arithmetic");
+    }
+    return {
+      type: "ParenArithm",
+      x: inner,
+      ...posOf(ctx, tok.offset, next.offset - tok.offset + 1),
+    };
+  }
+  throw new Error(`Unexpected token in arithmetic: ${JSON.stringify(tok)}`);
+}

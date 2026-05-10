@@ -79,9 +79,9 @@ export const cmdSubst = (...stmts: Statement[]): CmdSubst => ({
   stmts,
   ...P,
 });
-export const arithExp = (expr: string): ArithExp => ({
+export const arithExp = (value: string): ArithExp => ({
   type: "ArithExp",
-  expr,
+  x: { type: "ArithLit", value, ...P },
   ...P,
 });
 export const word = (value: string): Word => ({
@@ -140,6 +140,12 @@ export const letClause = (exprs: Word[], redirects?: Redirect[]): LetClause => {
   if (redirects) l.redirects = redirects;
   return l;
 };
+/**
+ * Build a CStyleLoop. Each clause is a raw arithmetic literal value (e.g.
+ * `"i = 0"`); pass `undefined` to omit. The clause is wrapped as an
+ * `ArithLit` placeholder; tests that care about structured arithmetic
+ * should compare against parser output via `toMatchAst`.
+ */
 export const cStyleLoop = (
   body: Statement[],
   init?: string,
@@ -147,9 +153,9 @@ export const cStyleLoop = (
   post?: string,
 ): CStyleLoop => {
   const c: CStyleLoop = { type: "CStyleLoop", body, ...P };
-  if (init !== undefined) c.init = init;
-  if (cond !== undefined) c.cond = cond;
-  if (post !== undefined) c.post = post;
+  if (init !== undefined) c.init = { type: "ArithLit", value: init, ...P };
+  if (cond !== undefined) c.cond = { type: "ArithLit", value: cond, ...P };
+  if (post !== undefined) c.post = { type: "ArithLit", value: post, ...P };
   return c;
 };
 export const redirect = (op: RedirOp, target: string, fd?: string): Redirect =>
@@ -227,9 +233,9 @@ export const testClause = (...words: Word[]): TestClause => ({
   expr: words,
   ...P,
 });
-export const arithCmd = (expr: string): ArithCmd => ({
+export const arithCmd = (value: string): ArithCmd => ({
   type: "ArithCmd",
-  expr,
+  x: { type: "ArithLit", value, ...P },
   ...P,
 });
 export const coprocClause = (body: Statement, name?: string): CoprocClause =>
