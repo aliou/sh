@@ -16,6 +16,7 @@ import type {
   LetClause,
   ParamExp,
   ParseOptions,
+  Pos,
   Program,
   Redirect,
   SelectClause,
@@ -38,6 +39,8 @@ import { tokenPartsText } from "../tokenizer";
 import { tokenize } from "../tokenizer/tokenize";
 import { DECL_KEYWORDS } from "./constants";
 
+const ZERO_POS: Pos = { offset: 0, line: 1, col: 1 };
+
 export class Parser {
   private index = 0;
   private comments: CommentNode[] = [];
@@ -50,11 +53,18 @@ export class Parser {
   parseProgram(): Program {
     const body: Statement[] = [];
     this.skipSeparators();
+    const startPos = this.peek()?.pos ?? ZERO_POS;
     while (!this.isEof()) {
       body.push(this.parseStatement());
       this.skipSeparators();
     }
-    const program: Program = { type: "Program", body };
+    const endPos = this.lastEnd() ?? startPos;
+    const program: Program = {
+      type: "Program",
+      body,
+      pos: startPos,
+      end: endPos,
+    };
     if (this.options.keepComments && this.comments.length > 0) {
       program.comments = this.comments;
     }
@@ -84,6 +94,8 @@ export class Parser {
   }
 
   private parseStatement(): Statement {
+    const startTok = this.peek();
+    const startPos = startTok?.pos ?? ZERO_POS;
     let negated = false;
     if (this.matchOp("!")) {
       this.consume();
@@ -95,7 +107,13 @@ export class Parser {
       this.consume();
       background = true;
     }
-    const statement: Statement = { type: "Statement", command };
+    const endPos = this.lastEnd() ?? startPos;
+    const statement: Statement = {
+      type: "Statement",
+      command,
+      pos: startPos,
+      end: endPos,
+    };
     if (background) {
       statement.background = true;
     }
@@ -113,11 +131,15 @@ export class Parser {
         throw new Error("Expected logical operator");
       }
       const rightCommand = this.parsePipeline();
+      const left = this.wrapStatement(leftCommand);
+      const right = this.wrapStatement(rightCommand);
       leftCommand = {
         type: "Logical",
         op: opToken.value === "&&" ? "and" : "or",
-        left: { type: "Statement", command: leftCommand },
-        right: { type: "Statement", command: rightCommand },
+        left,
+        right,
+        pos: left.pos ?? ZERO_POS,
+        end: right.end ?? ZERO_POS,
       };
     }
     return leftCommand;
@@ -128,14 +150,20 @@ export class Parser {
     if (!this.matchOp("|")) {
       return first;
     }
-
-    const commands: Statement[] = [{ type: "Statement", command: first }];
+    const firstStmt = this.wrapStatement(first);
+    const commands: Statement[] = [firstStmt];
     while (this.matchOp("|")) {
       this.consume();
       const next = this.parseCommandAtom();
-      commands.push({ type: "Statement", command: next });
+      commands.push(this.wrapStatement(next));
     }
-    return { type: "Pipeline", commands };
+    const last = commands[commands.length - 1];
+    return {
+      type: "Pipeline",
+      commands,
+      pos: firstStmt.pos ?? ZERO_POS,
+      end: last?.end ?? firstStmt.end ?? ZERO_POS,
+    };
   }
 
   private parseCommandAtom(): Command {
@@ -188,17 +216,17 @@ export class Parser {
   }
 
   private parseSubshell(): Subshell {
-    this.consumeSymbol("(");
+    const open = this.consumeSymbol("(");
     const body = this.parseStatementList(")");
-    this.consumeSymbol(")");
-    return { type: "Subshell", body };
+    const close = this.consumeSymbol(")");
+    return { type: "Subshell", body, pos: open.pos, end: close.end };
   }
 
   private parseBlock(): Block {
-    this.consumeSymbol("{");
+    const open = this.consumeSymbol("{");
     const body = this.parseStatementList("}");
-    this.consumeSymbol("}");
-    return { type: "Block", body };
+    const close = this.consumeSymbol("}");
+    return { type: "Block", body, pos: open.pos, end: close.end };
   }
 
   private parseStatementList(endSymbol: SymbolTokenValue): Statement[] {
@@ -217,23 +245,19 @@ export class Parser {
   }
 
   private parseIfClause(): IfClause {
-    this.consumeKeyword("if");
+    const ifTok = this.consumeKeyword("if");
     const cond = this.parseStatementsUntilKeyword(["then"]);
     this.consumeKeyword("then");
     const thenBranch = this.parseStatementsUntilKeyword(["else", "elif", "fi"]);
     let elseBranch: Statement[] | undefined;
     if (this.matchKeyword("elif")) {
-      elseBranch = [
-        {
-          type: "Statement",
-          command: this.parseElifClause(),
-        },
-      ];
+      const elif = this.parseElifClause();
+      elseBranch = [this.wrapStatement(elif)];
     } else if (this.matchKeyword("else")) {
       this.consumeKeyword("else");
       elseBranch = this.parseStatementsUntilKeyword(["fi"]);
     }
-    this.consumeKeyword("fi");
+    const fi = this.consumeKeyword("fi");
     return elseBranch
       ? {
           type: "IfClause",
@@ -241,32 +265,33 @@ export class Parser {
           // biome-ignore lint/suspicious/noThenProperty: shell AST field
           then: thenBranch,
           else: elseBranch,
+          pos: ifTok.pos,
+          end: fi.end,
         }
       : {
           type: "IfClause",
           cond,
           // biome-ignore lint/suspicious/noThenProperty: shell AST field
           then: thenBranch,
+          pos: ifTok.pos,
+          end: fi.end,
         };
   }
 
   private parseElifClause(): IfClause {
-    this.consumeKeyword("elif");
+    const elif = this.consumeKeyword("elif");
     const cond = this.parseStatementsUntilKeyword(["then"]);
     this.consumeKeyword("then");
     const thenBranch = this.parseStatementsUntilKeyword(["else", "elif", "fi"]);
     let elseBranch: Statement[] | undefined;
     if (this.matchKeyword("elif")) {
-      elseBranch = [
-        {
-          type: "Statement",
-          command: this.parseElifClause(),
-        },
-      ];
+      const inner = this.parseElifClause();
+      elseBranch = [this.wrapStatement(inner)];
     } else if (this.matchKeyword("else")) {
       this.consumeKeyword("else");
       elseBranch = this.parseStatementsUntilKeyword(["fi"]);
     }
+    const lastEnd = this.lastEnd() ?? elif.end;
     return elseBranch
       ? {
           type: "IfClause",
@@ -274,32 +299,49 @@ export class Parser {
           // biome-ignore lint/suspicious/noThenProperty: shell AST field
           then: thenBranch,
           else: elseBranch,
+          pos: elif.pos,
+          end: lastEnd,
         }
       : {
           type: "IfClause",
           cond,
           // biome-ignore lint/suspicious/noThenProperty: shell AST field
           then: thenBranch,
+          pos: elif.pos,
+          end: lastEnd,
         };
   }
 
   private parseWhileClause(until: boolean): WhileClause {
-    this.consumeKeyword(until ? "until" : "while");
+    const head = this.consumeKeyword(until ? "until" : "while");
     const cond = this.parseStatementsUntilKeyword(["do"]);
     this.consumeKeyword("do");
     const body = this.parseStatementsUntilKeyword(["done"]);
-    this.consumeKeyword("done");
+    const done = this.consumeKeyword("done");
     return until
-      ? { type: "WhileClause", cond, body, until: true }
-      : { type: "WhileClause", cond, body };
+      ? {
+          type: "WhileClause",
+          cond,
+          body,
+          until: true,
+          pos: head.pos,
+          end: done.end,
+        }
+      : {
+          type: "WhileClause",
+          cond,
+          body,
+          pos: head.pos,
+          end: done.end,
+        };
   }
 
   private parseForOrCStyleLoop(): ForClause | CStyleLoop {
-    this.consumeKeyword("for");
+    const forTok = this.consumeKeyword("for");
 
     // C-style: for (( init; cond; post ))
     if (this.matchArithCmd()) {
-      return this.parseCStyleLoop();
+      return this.parseCStyleLoop(forTok.pos);
     }
 
     const nameToken = this.consume();
@@ -316,7 +358,7 @@ export class Parser {
         if (itemToken.type !== "word") {
           throw new Error("Expected loop item word");
         }
-        collected.push(this.wordFromParts(itemToken.parts));
+        collected.push(this.wordFromToken(itemToken));
       }
       if (collected.length > 0) {
         items = collected;
@@ -328,13 +370,13 @@ export class Parser {
     this.skipSeparators();
     this.consumeKeyword("do");
     const body = this.parseStatementsUntilKeyword(["done"]);
-    this.consumeKeyword("done");
+    const done = this.consumeKeyword("done");
     return items
-      ? { type: "ForClause", name, items, body }
-      : { type: "ForClause", name, body };
+      ? { type: "ForClause", name, items, body, pos: forTok.pos, end: done.end }
+      : { type: "ForClause", name, body, pos: forTok.pos, end: done.end };
   }
 
-  private parseCStyleLoop(): CStyleLoop {
+  private parseCStyleLoop(startPos: Pos): CStyleLoop {
     const token = this.consume();
     if (token.type !== "arith-cmd") {
       throw new Error("Expected (( )) in c-style for");
@@ -351,8 +393,13 @@ export class Parser {
     this.skipSeparators();
     this.consumeKeyword("do");
     const body = this.parseStatementsUntilKeyword(["done"]);
-    this.consumeKeyword("done");
-    const loop: CStyleLoop = { type: "CStyleLoop", body };
+    const done = this.consumeKeyword("done");
+    const loop: CStyleLoop = {
+      type: "CStyleLoop",
+      body,
+      pos: startPos,
+      end: done.end,
+    };
     if (init !== undefined) loop.init = init;
     if (cond !== undefined) loop.cond = cond;
     if (post !== undefined) loop.post = post;
@@ -360,7 +407,7 @@ export class Parser {
   }
 
   private parseSelectClause(): SelectClause {
-    this.consumeKeyword("select");
+    const head = this.consumeKeyword("select");
     const nameToken = this.consume();
     if (nameToken.type !== "word") {
       throw new Error("Expected select variable name");
@@ -375,7 +422,7 @@ export class Parser {
         if (itemToken.type !== "word") {
           throw new Error("Expected select item word");
         }
-        collected.push(this.wordFromParts(itemToken.parts));
+        collected.push(this.wordFromToken(itemToken));
       }
       if (collected.length > 0) {
         items = collected;
@@ -387,43 +434,60 @@ export class Parser {
     this.skipSeparators();
     this.consumeKeyword("do");
     const body = this.parseStatementsUntilKeyword(["done"]);
-    this.consumeKeyword("done");
+    const done = this.consumeKeyword("done");
     return items
-      ? { type: "SelectClause", name, items, body }
-      : { type: "SelectClause", name, body };
+      ? {
+          type: "SelectClause",
+          name,
+          items,
+          body,
+          pos: head.pos,
+          end: done.end,
+        }
+      : { type: "SelectClause", name, body, pos: head.pos, end: done.end };
   }
 
   private parseFunctionDecl(): FunctionDecl {
+    let startPos: Pos | undefined;
     if (this.matchKeyword("function")) {
-      this.consumeKeyword("function");
+      const fk = this.consumeKeyword("function");
+      startPos = fk.pos;
     }
     const nameToken = this.consume();
     if (nameToken.type !== "word") {
       throw new Error("Expected function name");
     }
+    if (!startPos) startPos = nameToken.pos;
     const name = tokenPartsText(nameToken.parts);
     if (this.matchSymbol("(")) {
       this.consumeSymbol("(");
       this.consumeSymbol(")");
     }
     if (this.matchSymbol("{")) {
-      const body = this.parseBlock().body;
-      return { type: "FunctionDecl", name, body };
+      const block = this.parseBlock();
+      return {
+        type: "FunctionDecl",
+        name,
+        body: block.body,
+        pos: startPos,
+        end: block.end ?? startPos,
+      };
     }
     throw new Error("Expected function body block");
   }
 
   private parseCaseClause(): CaseClause {
-    this.consumeKeyword("case");
+    const head = this.consumeKeyword("case");
     const wordToken = this.consume();
     if (wordToken.type !== "word") {
       throw new Error("Expected case word");
     }
-    const word = this.wordFromParts(wordToken.parts);
+    const word = this.wordFromToken(wordToken);
     this.consumeKeyword("in");
     const items: CaseItem[] = [];
     this.skipSeparators();
     while (!this.matchKeyword("esac")) {
+      const itemStart = this.peek()?.pos ?? head.pos;
       const patterns: Word[] = [];
       while (!this.matchSymbol(")")) {
         if (this.matchWord()) {
@@ -431,7 +495,7 @@ export class Parser {
           if (patternToken.type !== "word") {
             throw new Error("Expected case pattern");
           }
-          patterns.push(this.wordFromParts(patternToken.parts));
+          patterns.push(this.wordFromToken(patternToken));
           continue;
         }
         if (this.matchOp("|")) {
@@ -442,34 +506,57 @@ export class Parser {
       }
       this.consumeSymbol(")");
       const body = this.parseCaseItemBody();
-      items.push({ type: "CaseItem", patterns, body });
+      const itemEnd = this.lastEnd() ?? itemStart;
+      items.push({
+        type: "CaseItem",
+        patterns,
+        body,
+        pos: itemStart,
+        end: itemEnd,
+      });
       if (this.matchOp(";") && this.peekOp(";")) {
         this.consume();
         this.consume();
       }
       this.skipSeparators();
     }
-    this.consumeKeyword("esac");
-    return { type: "CaseClause", word, items };
+    const esac = this.consumeKeyword("esac");
+    return {
+      type: "CaseClause",
+      word,
+      items,
+      pos: head.pos,
+      end: esac.end,
+    };
   }
 
   private parseTimeClause(): TimeClause {
-    this.consumeKeyword("time");
+    const head = this.consumeKeyword("time");
     const command = this.parseStatement();
-    return { type: "TimeClause", command };
+    return {
+      type: "TimeClause",
+      command,
+      pos: head.pos,
+      end: command.end ?? head.end,
+    };
   }
 
   private parseTestClause(): TestClause {
-    this.consumeKeyword("[[");
+    const open = this.consumeKeyword("[[");
     const words: Word[] = [];
     while (!this.matchKeyword("]]")) {
       if (this.isEof()) throw new Error("Unclosed [[");
       const token = this.consume();
       if (token.type !== "word") throw new Error("Expected word in [[ ]]");
-      words.push(this.wordFromParts(token.parts));
+      words.push(this.wordFromToken(token));
     }
-    this.consumeKeyword("]]");
-    return { type: "TestClause", expr: words };
+    const close = this.consumeKeyword("]]");
+    return {
+      type: "TestClause",
+      expr: words,
+      pos: open.pos,
+      end: close.end,
+    };
   }
 
   private matchArithCmd(): boolean {
@@ -480,11 +567,16 @@ export class Parser {
     const token = this.consume();
     if (token.type !== "arith-cmd")
       throw new Error("Expected arithmetic command");
-    return { type: "ArithCmd", expr: token.expr };
+    return {
+      type: "ArithCmd",
+      expr: token.expr,
+      pos: token.pos,
+      end: token.end,
+    };
   }
 
   private parseCoprocClause(): CoprocClause {
-    this.consumeKeyword("coproc");
+    const head = this.consumeKeyword("coproc");
     if (this.matchWord() && this.peekToken(1)?.type === "symbol") {
       const nameToken = this.peek();
       if (
@@ -495,11 +587,22 @@ export class Parser {
         const name = tokenPartsText(nameToken.parts);
         this.consume();
         const body = this.parseStatement();
-        return { type: "CoprocClause", name, body };
+        return {
+          type: "CoprocClause",
+          name,
+          body,
+          pos: head.pos,
+          end: body.end ?? head.end,
+        };
       }
     }
     const body = this.parseStatement();
-    return { type: "CoprocClause", body };
+    return {
+      type: "CoprocClause",
+      body,
+      pos: head.pos,
+      end: body.end ?? head.end,
+    };
   }
 
   private parseCaseItemBody(): Statement[] {
@@ -554,19 +657,7 @@ export class Parser {
 
     while (true) {
       if (this.matchRedir()) {
-        const token = this.consume();
-        if (token.type !== "redir") {
-          throw new Error("Expected redirect token");
-        }
-        const targetToken = this.consume();
-        if (targetToken.type !== "word") {
-          throw new Error("Redirect must be followed by a word");
-        }
-        const target = this.wordFromParts(targetToken.parts);
-        const redir: Redirect = token.fd
-          ? { type: "Redirect", op: token.op, fd: token.fd, target }
-          : { type: "Redirect", op: token.op, target };
-        redirects.push(redir);
+        redirects.push(this.parseRedirect());
         continue;
       }
 
@@ -574,23 +665,27 @@ export class Parser {
         const token = this.peek();
         if (!token || token.type !== "word") break;
 
-        // tryParseAssignment consumes tokens itself if it matches
-        const assignment = this.tryParseAssignment(token.parts);
+        const assignment = this.tryParseAssignment(token);
         if (assignment) {
           assigns.push(assignment);
           continue;
         }
 
-        // Otherwise it's a plain arg (flag or name)
         this.consume();
-        args.push(this.wordFromParts(token.parts));
+        args.push(this.wordFromToken(token));
         continue;
       }
 
       break;
     }
 
-    const decl: DeclClause = { type: "DeclClause", variant };
+    const lastEnd = this.lastEnd() ?? variantToken.end;
+    const decl: DeclClause = {
+      type: "DeclClause",
+      variant,
+      pos: variantToken.pos,
+      end: lastEnd,
+    };
     if (args.length > 0) decl.args = args;
     if (assigns.length > 0) decl.assigns = assigns;
     if (redirects.length > 0) decl.redirects = redirects;
@@ -598,32 +693,20 @@ export class Parser {
   }
 
   private parseLetClause(): LetClause {
-    this.consumeKeyword("let");
+    const letTok = this.consumeKeyword("let");
     const exprs: Word[] = [];
     const redirects: Redirect[] = [];
 
     while (true) {
       if (this.matchRedir()) {
-        const token = this.consume();
-        if (token.type !== "redir") {
-          throw new Error("Expected redirect token");
-        }
-        const targetToken = this.consume();
-        if (targetToken.type !== "word") {
-          throw new Error("Redirect must be followed by a word");
-        }
-        const target = this.wordFromParts(targetToken.parts);
-        const redir: Redirect = token.fd
-          ? { type: "Redirect", op: token.op, fd: token.fd, target }
-          : { type: "Redirect", op: token.op, target };
-        redirects.push(redir);
+        redirects.push(this.parseRedirect());
         continue;
       }
 
       if (this.matchWord()) {
         const token = this.consume();
         if (token.type !== "word") break;
-        exprs.push(this.wordFromParts(token.parts));
+        exprs.push(this.wordFromToken(token));
         continue;
       }
 
@@ -634,12 +717,18 @@ export class Parser {
       throw new Error("let requires at least one expression");
     }
 
-    const clause: LetClause = { type: "LetClause", exprs };
+    const clause: LetClause = {
+      type: "LetClause",
+      exprs,
+      pos: letTok.pos,
+      end: this.lastEnd() ?? letTok.end,
+    };
     if (redirects.length > 0) clause.redirects = redirects;
     return clause;
   }
 
   private parseSimpleCommand(): SimpleCommand {
+    const startPos = this.peek()?.pos ?? ZERO_POS;
     const words: Word[] = [];
     const assignments: Assignment[] = [];
     const redirects: Redirect[] = [];
@@ -652,9 +741,8 @@ export class Parser {
           throw new Error("Expected word token");
         }
 
-        // tryParseAssignment consumes tokens itself if it matches
         if (!sawWord) {
-          const assignment = this.tryParseAssignment(token.parts);
+          const assignment = this.tryParseAssignment(token);
           if (assignment) {
             assignments.push(assignment);
             continue;
@@ -663,38 +751,12 @@ export class Parser {
 
         this.consume();
         sawWord = true;
-        words.push(this.wordFromParts(token.parts));
+        words.push(this.wordFromToken(token));
         continue;
       }
 
       if (this.matchRedir()) {
-        const token = this.consume();
-        if (token.type !== "redir") {
-          throw new Error("Expected redirect token");
-        }
-        const targetToken = this.consume();
-        if (targetToken.type !== "word") {
-          throw new Error("Redirect must be followed by a word");
-        }
-        const target = this.wordFromParts(targetToken.parts);
-        const redirect: Redirect = token.fd
-          ? { type: "Redirect", op: token.op, fd: token.fd, target }
-          : { type: "Redirect", op: token.op, target };
-        // Collect heredoc body if this is a heredoc redirect
-        if (token.op === "<<" || token.op === "<<-") {
-          // Skip separators to find the heredoc-body token
-          this.skipSeparators();
-          if (this.peek()?.type === "heredoc-body") {
-            const bodyToken = this.consume();
-            if (bodyToken.type === "heredoc-body") {
-              redirect.heredoc = {
-                type: "Word",
-                parts: [{ type: "Literal", value: bodyToken.content }],
-              };
-            }
-          }
-        }
-        redirects.push(redirect);
+        redirects.push(this.parseRedirect());
         continue;
       }
 
@@ -709,7 +771,12 @@ export class Parser {
       throw new Error("Expected a command word");
     }
 
-    const command: SimpleCommand = { type: "SimpleCommand" };
+    const endPos = this.lastEnd() ?? startPos;
+    const command: SimpleCommand = {
+      type: "SimpleCommand",
+      pos: startPos,
+      end: endPos,
+    };
     if (words.length > 0) {
       command.words = words;
     }
@@ -722,22 +789,87 @@ export class Parser {
     return command;
   }
 
+  private parseRedirect(): Redirect {
+    const token = this.consume();
+    if (token.type !== "redir") {
+      throw new Error("Expected redirect token");
+    }
+    const targetToken = this.consume();
+    if (targetToken.type !== "word") {
+      throw new Error("Redirect must be followed by a word");
+    }
+    const target = this.wordFromToken(targetToken);
+    const redirect: Redirect = token.fd
+      ? {
+          type: "Redirect",
+          op: token.op,
+          fd: token.fd,
+          target,
+          pos: token.pos,
+          end: target.end ?? targetToken.end,
+        }
+      : {
+          type: "Redirect",
+          op: token.op,
+          target,
+          pos: token.pos,
+          end: target.end ?? targetToken.end,
+        };
+    if (token.op === "<<" || token.op === "<<-") {
+      this.skipSeparators();
+      if (this.peek()?.type === "heredoc-body") {
+        const bodyToken = this.consume();
+        if (bodyToken.type === "heredoc-body") {
+          redirect.heredoc = {
+            type: "Word",
+            parts: [
+              {
+                type: "Literal",
+                value: bodyToken.content,
+                pos: bodyToken.pos,
+                end: bodyToken.end,
+              },
+            ],
+            pos: bodyToken.pos,
+            end: bodyToken.end,
+          };
+          redirect.end = bodyToken.end;
+        }
+      }
+    }
+    return redirect;
+  }
+
   private convertWordPart(part: TokenWordPart): WordPart {
     switch (part.type) {
       case "lit":
-        return { type: "Literal", value: part.value };
+        return {
+          type: "Literal",
+          value: part.value,
+          pos: part.pos,
+          end: part.end,
+        };
       case "sgl":
-        return { type: "SglQuoted", value: part.value };
+        return {
+          type: "SglQuoted",
+          value: part.value,
+          pos: part.pos,
+          end: part.end,
+        };
       case "dbl":
         return {
           type: "DblQuoted",
           parts: part.parts.map((p) => this.convertWordPart(p)),
+          pos: part.pos,
+          end: part.end,
         };
       case "param": {
         const paramExp: ParamExp = {
           type: "ParamExp",
           short: !part.braced,
           param: { type: "Literal", value: part.name },
+          pos: part.pos,
+          end: part.end,
         };
         if (part.op) {
           paramExp.op = part.op;
@@ -754,45 +886,68 @@ export class Parser {
         const innerTokens = tokenize(part.raw);
         const innerParser = new Parser(innerTokens);
         const prog = innerParser.parseProgram();
-        return { type: "CmdSubst", stmts: prog.body };
+        return {
+          type: "CmdSubst",
+          stmts: prog.body,
+          pos: part.pos,
+          end: part.end,
+        };
       }
       case "arith-exp":
-        return { type: "ArithExp", expr: part.raw };
+        return {
+          type: "ArithExp",
+          expr: part.raw,
+          pos: part.pos,
+          end: part.end,
+        };
       case "proc-subst": {
         const innerTokens = tokenize(part.raw);
         const innerParser = new Parser(innerTokens);
         const prog = innerParser.parseProgram();
-        return { type: "ProcSubst", op: part.op, stmts: prog.body };
+        return {
+          type: "ProcSubst",
+          op: part.op,
+          stmts: prog.body,
+          pos: part.pos,
+          end: part.end,
+        };
       }
       case "backtick": {
         const innerTokens = tokenize(part.raw);
         const innerParser = new Parser(innerTokens);
         const prog = innerParser.parseProgram();
-        return { type: "CmdSubst", stmts: prog.body };
+        return {
+          type: "CmdSubst",
+          stmts: prog.body,
+          pos: part.pos,
+          end: part.end,
+        };
       }
     }
   }
 
-  private wordFromParts(parts: TokenWordPart[]): Word {
+  private wordFromToken(token: Token & { type: "word" }): Word {
     return {
       type: "Word",
-      parts: parts.map((part) => this.convertWordPart(part)),
+      parts: token.parts.map((part) => this.convertWordPart(part)),
+      pos: token.pos,
+      end: token.end,
     };
   }
 
   /**
-   * Try to parse an assignment from the current token's parts.
-   * If it returns an assignment, it has already consumed all relevant tokens
-   * (the word, and optionally the array `(...)` symbols).
-   * If it returns undefined, nothing was consumed.
+   * Try to parse an assignment from a word token.
+   * Consumes tokens itself if it matches; returns undefined otherwise.
    */
-  private tryParseAssignment(parts: TokenWordPart[]): Assignment | undefined {
+  private tryParseAssignment(
+    token: Token & { type: "word" },
+  ): Assignment | undefined {
+    const parts = token.parts;
     if (parts.length !== 1) return undefined;
     const part = parts[0];
     if (!part || part.type !== "lit") return undefined;
     const raw = part.value;
 
-    // Detect NAME= or NAME+=
     let append = false;
     let eqIndex = raw.indexOf("+=");
     if (eqIndex > 0) {
@@ -807,7 +962,6 @@ export class Parser {
 
     const afterEq = raw.slice(eqIndex + (append ? 2 : 1));
 
-    // Check for array assignment: NAME=( ... ) or NAME+=( ... )
     const nextToken = this.peekToken(1);
     if (
       afterEq === "" &&
@@ -815,13 +969,17 @@ export class Parser {
       (nextToken as { value: string }).value === "("
     ) {
       this.consume(); // consume the NAME= word
-      return this.parseArrayAssignment(name, append);
+      return this.parseArrayAssignment(name, append, token.pos);
     }
 
-    // Consume the word token
     this.consume();
 
-    const assignment: Assignment = { type: "Assignment", name };
+    const assignment: Assignment = {
+      type: "Assignment",
+      name,
+      pos: token.pos,
+      end: token.end,
+    };
     if (append) assignment.append = true;
     if (afterEq.length > 0) {
       assignment.value = {
@@ -832,8 +990,12 @@ export class Parser {
     return assignment;
   }
 
-  private parseArrayAssignment(name: string, append: boolean): Assignment {
-    this.consumeSymbol("(");
+  private parseArrayAssignment(
+    name: string,
+    append: boolean,
+    startPos: Pos,
+  ): Assignment {
+    const open = this.consumeSymbol("(");
     const elems: ArrayElem[] = [];
 
     while (!this.matchSymbol(")")) {
@@ -867,6 +1029,8 @@ export class Parser {
             type: "Word",
             parts: [{ type: "Literal", value: indexStr }],
           },
+          pos: token.pos,
+          end: token.end,
         };
         if (valStr.length > 0) {
           elem.value = {
@@ -878,17 +1042,26 @@ export class Parser {
       } else {
         elems.push({
           type: "ArrayElem",
-          value: this.wordFromParts(token.parts),
+          value: this.wordFromToken(token),
+          pos: token.pos,
+          end: token.end,
         });
       }
     }
 
-    this.consumeSymbol(")");
+    const close = this.consumeSymbol(")");
 
     const assignment: Assignment = {
       type: "Assignment",
       name,
-      array: { type: "ArrayExpr", elems },
+      array: {
+        type: "ArrayExpr",
+        elems,
+        pos: open.pos,
+        end: close.end,
+      },
+      pos: startPos,
+      end: close.end,
     };
     if (append) assignment.append = true;
     return assignment;
@@ -908,6 +1081,15 @@ export class Parser {
     while (this.matchOp(";") && !this.peekOp(";")) {
       this.consume();
     }
+  }
+
+  private wrapStatement(command: Command): Statement {
+    return {
+      type: "Statement",
+      command,
+      pos: command.pos ?? ZERO_POS,
+      end: command.end ?? ZERO_POS,
+    };
   }
 
   private matchOp(value: OpTokenValue) {
@@ -955,14 +1137,15 @@ export class Parser {
     return token?.type === "symbol" && token.value === value;
   }
 
-  private consumeSymbol(value: SymbolTokenValue) {
+  private consumeSymbol(value: SymbolTokenValue): Token & { type: "symbol" } {
     const token = this.consume();
     if (token.type !== "symbol" || token.value !== value) {
       throw new Error(`Expected symbol ${value}`);
     }
+    return token;
   }
 
-  private consumeKeyword(value: string) {
+  private consumeKeyword(value: string): Token & { type: "word" } {
     const token = this.consume();
     if (
       token.type !== "word" ||
@@ -972,6 +1155,7 @@ export class Parser {
     ) {
       throw new Error(`Expected keyword ${value}`);
     }
+    return token;
   }
 
   private consume(): Token {
@@ -1006,11 +1190,21 @@ export class Parser {
   private consumeComment() {
     const token = this.consume();
     if (token.type === "comment") {
-      this.comments.push({ type: "Comment", text: token.text });
+      this.comments.push({
+        type: "Comment",
+        text: token.text,
+        pos: token.pos,
+        end: token.end,
+      });
     }
   }
 
   private isEof() {
     return this.index >= this.tokens.length;
+  }
+
+  private lastEnd(): Pos | undefined {
+    const tok = this.tokens[this.index - 1];
+    return tok?.end;
   }
 }

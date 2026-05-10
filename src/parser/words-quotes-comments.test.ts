@@ -12,23 +12,23 @@ import {
 
 describe("parse (phase 2: words, quotes, comments)", () => {
   it("ignores full-line and trailing comments", () => {
-    expect(parse("# foo\nbar")).toEqual({
+    expect(parse("# foo\nbar")).toMatchAst({
       ast: program(stmt(simple("bar"))),
     });
 
-    expect(parse("foo # bar")).toEqual({
+    expect(parse("foo # bar")).toMatchAst({
       ast: program(stmt(simple("foo"))),
     });
   });
 
   it("keeps # when not at a boundary", () => {
-    expect(parse("foo#bar")).toEqual({
+    expect(parse("foo#bar")).toMatchAst({
       ast: program(stmt(simple("foo#bar"))),
     });
   });
 
   it("parses single-quoted parts", () => {
-    expect(parse("foo'bar'")).toEqual({
+    expect(parse("foo'bar'")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -39,7 +39,7 @@ describe("parse (phase 2: words, quotes, comments)", () => {
   });
 
   it("parses double-quoted parts", () => {
-    expect(parse('"foo bar"')).toEqual({
+    expect(parse('"foo bar"')).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -50,7 +50,7 @@ describe("parse (phase 2: words, quotes, comments)", () => {
   });
 
   it("treats backslash-newline as whitespace", () => {
-    expect(parse("foo \\\n bar")).toEqual({
+    expect(parse("foo \\\n bar")).toMatchAst({
       ast: program(stmt(simple("foo", "bar"))),
     });
   });

@@ -81,7 +81,7 @@ describe("guardrail validation: package manager enforcement", () => {
     },
   ])("$desc: npm is not extracted as a command", ({ input, expected }) => {
     const cmds = extractCommandNames(parse(input).ast);
-    expect(cmds).toEqual(expected);
+    expect(cmds).toMatchAst(expected);
     expect(cmds).not.toContain("npm");
   });
 
@@ -100,7 +100,7 @@ describe("guardrail validation: package manager enforcement", () => {
     const cmds = extractCommandNames(
       parse("cd /project && pnpm --filter pi-relay-server test").ast,
     );
-    expect(cmds).toEqual(["cd", "pnpm"]);
+    expect(cmds).toMatchAst(["cd", "pnpm"]);
     expect(cmds).not.toContain("npm");
   });
 
@@ -108,7 +108,7 @@ describe("guardrail validation: package manager enforcement", () => {
     const cmds = extractCommandNames(
       parse("npm ci --omit=dev 2>/dev/null || npm install --omit=dev").ast,
     );
-    expect(cmds).toEqual(["npm", "npm"]);
+    expect(cmds).toMatchAst(["npm", "npm"]);
   });
 
   it("heredoc containing npm install is not an npm command", () => {
@@ -117,7 +117,7 @@ RUN npm install --omit=dev
 npm ci
 EOF`;
     const cmds = extractCommandNames(parse(input).ast);
-    expect(cmds).toEqual(["cat"]);
+    expect(cmds).toMatchAst(["cat"]);
     expect(cmds).not.toContain("npm");
   });
 
@@ -127,7 +127,7 @@ FROM node:22-slim
 RUN npm install --omit=dev
 DOCKERFILE`;
     const cmds = extractCommandNames(parse(input).ast);
-    expect(cmds).toEqual(["docker"]);
+    expect(cmds).toMatchAst(["docker"]);
     expect(cmds).not.toContain("npm");
   });
 

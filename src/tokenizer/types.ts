@@ -1,30 +1,38 @@
-import type { RedirOp } from "../ast";
+import type { Pos, RedirOp } from "../ast";
 
 export type OpTokenValue = "&&" | "||" | "|" | ";" | "&" | "!";
 
 export type SymbolTokenValue = "(" | ")" | "{" | "}";
 
+/** Position info attached to every token and inner part. */
+export type WithPos = { pos: Pos; end: Pos };
+
 export type TokenWordPart =
-  | { type: "lit"; value: string }
-  | { type: "sgl"; value: string }
-  | { type: "dbl"; parts: TokenWordPart[] }
-  | {
+  | (WithPos & { type: "lit"; value: string })
+  | (WithPos & { type: "sgl"; value: string })
+  | (WithPos & { type: "dbl"; parts: TokenWordPart[] })
+  | (WithPos & {
       type: "param";
       name: string;
       braced: boolean;
       op?: string;
       value?: string;
-    }
-  | { type: "cmd-subst"; raw: string }
-  | { type: "arith-exp"; raw: string }
-  | { type: "proc-subst"; op: "<" | ">"; raw: string }
-  | { type: "backtick"; raw: string };
+    })
+  | (WithPos & { type: "cmd-subst"; raw: string; innerOffset: number })
+  | (WithPos & { type: "arith-exp"; raw: string; innerOffset: number })
+  | (WithPos & {
+      type: "proc-subst";
+      op: "<" | ">";
+      raw: string;
+      innerOffset: number;
+    })
+  | (WithPos & { type: "backtick"; raw: string; innerOffset: number });
 
 export type Token =
-  | { type: "word"; parts: TokenWordPart[] }
-  | { type: "op"; value: OpTokenValue }
-  | { type: "redir"; op: RedirOp; fd?: string }
-  | { type: "symbol"; value: SymbolTokenValue }
-  | { type: "arith-cmd"; expr: string }
-  | { type: "heredoc-body"; content: string }
-  | { type: "comment"; text: string };
+  | (WithPos & { type: "word"; parts: TokenWordPart[] })
+  | (WithPos & { type: "op"; value: OpTokenValue })
+  | (WithPos & { type: "redir"; op: RedirOp; fd?: string })
+  | (WithPos & { type: "symbol"; value: SymbolTokenValue })
+  | (WithPos & { type: "arith-cmd"; expr: string; innerOffset: number })
+  | (WithPos & { type: "heredoc-body"; content: string })
+  | (WithPos & { type: "comment"; text: string });
