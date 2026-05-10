@@ -65,9 +65,13 @@ export const paramExp = (
     param: lit(name),
     ...P,
   };
-  if (op !== undefined) p.op = op;
-  if (value !== undefined)
-    p.value = { type: "Word", parts: [lit(value)], ...P };
+  if (op !== undefined) {
+    type ParamOp = NonNullable<ParamExp["exp"]>["op"];
+    p.exp = { op: op as ParamOp };
+    if (value !== undefined) {
+      p.exp.word = { type: "Word", parts: [lit(value)], ...P };
+    }
+  }
   return p;
 };
 export const cmdSubst = (...stmts: Statement[]): CmdSubst => ({
