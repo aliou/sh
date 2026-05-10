@@ -64,4 +64,5 @@ export {
   type WordPart,
 } from "./ast";
 export { parse } from "./parse";
+export { parseStmtsSeq, parseWordsSeq } from "./seq";
 export { splitBraces } from "./split-braces";
