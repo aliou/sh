@@ -15,6 +15,8 @@ export {
   type CStyleLoop,
   type DblQuoted,
   type DeclClause,
+  type ExtGlob,
+  type ExtGlobOp,
   type ForClause,
   type FunctionDecl,
   type IfClause,

@@ -923,6 +923,14 @@ export class Parser {
           end: part.end,
         };
       }
+      case "ext-glob":
+        return {
+          type: "ExtGlob",
+          op: part.op,
+          pattern: part.pattern,
+          pos: part.pos,
+          end: part.end,
+        };
     }
   }
 
