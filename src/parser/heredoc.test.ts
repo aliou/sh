@@ -4,7 +4,7 @@ import { program, stmt, word } from "../test-helpers/ast-builders";
 
 describe("parse (phase 18: heredoc)", () => {
   it("parses << heredoc", () => {
-    expect(parse("cat <<EOF\nhello\nEOF")).toEqual({
+    expect(parse("cat <<EOF\nhello\nEOF")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -23,7 +23,7 @@ describe("parse (phase 18: heredoc)", () => {
   });
 
   it("parses <<- heredoc (strips leading tabs)", () => {
-    expect(parse("cat <<-EOF\n\thello\n\tEOF")).toEqual({
+    expect(parse("cat <<-EOF\n\thello\n\tEOF")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",

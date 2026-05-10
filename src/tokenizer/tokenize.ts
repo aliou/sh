@@ -1,5 +1,6 @@
 import type { ParseOptions } from "../ast";
 import { isDigit, operatorChars, redirChars, symbolChars } from "./charsets";
+import { SourceMap } from "./cursor";
 import { scanBacktick } from "./scan-backtick";
 import { scanExpansion } from "./scan-expansion";
 import { tryRedirOp } from "./scan-redir";
@@ -7,6 +8,7 @@ import type { SymbolTokenValue, Token, TokenWordPart } from "./types";
 import { tokenPartsText } from "./utils";
 
 export function tokenize(source: string, options: ParseOptions = {}): Token[] {
+  const map = new SourceMap(source);
   const tokens: Token[] = [];
   let i = 0;
   let atBoundary = true;
@@ -35,7 +37,12 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
     }
 
     if (ch === "\n") {
-      tokens.push({ type: "op", value: ";" });
+      tokens.push({
+        type: "op",
+        value: ";",
+        pos: map.posAt(i),
+        end: map.posAt(i + 1),
+      });
       atBoundary = true;
       i += 1;
 
@@ -62,37 +69,62 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
 
       // Collect heredoc bodies
       for (const hd of pendingHeredocs) {
+        const bodyStart = i;
         let body = "";
         while (i < source.length) {
           let lineEnd = source.indexOf("\n", i);
           if (lineEnd === -1) lineEnd = source.length;
-          const line = source.slice(i, lineEnd);
+          // Strip an optional trailing CR for CRLF inputs.
+          let realLineEnd = lineEnd;
+          if (
+            realLineEnd > i &&
+            source.charCodeAt(realLineEnd - 1) === 13 /* \r */
+          ) {
+            realLineEnd -= 1;
+          }
+          const line = source.slice(i, realLineEnd);
           const checkLine = hd.strip ? line.replace(/^\t+/, "") : line;
           i = lineEnd < source.length ? lineEnd + 1 : lineEnd;
           if (checkLine === hd.delimiter) break;
           const processedLine = hd.strip ? line.replace(/^\t+/, "") : line;
           body += `${processedLine}\n`;
         }
-        tokens.push({ type: "heredoc-body", content: body });
+        tokens.push({
+          type: "heredoc-body",
+          content: body,
+          pos: map.posAt(bodyStart),
+          end: map.posAt(i),
+        });
       }
 
       continue;
     }
 
     if (ch === "#" && atBoundary) {
+      const startOffset = i;
       const start = i + 1;
       i += 1;
       while (i < source.length && source.charAt(i) !== "\n") {
         i += 1;
       }
       if (options.keepComments) {
-        tokens.push({ type: "comment", text: source.slice(start, i) });
+        tokens.push({
+          type: "comment",
+          text: source.slice(start, i),
+          pos: map.posAt(startOffset),
+          end: map.posAt(i),
+        });
       }
       continue;
     }
 
     if (ch === "!" && atBoundary) {
-      tokens.push({ type: "op", value: "!" });
+      tokens.push({
+        type: "op",
+        value: "!",
+        pos: map.posAt(i),
+        end: map.posAt(i + 1),
+      });
       atBoundary = true;
       i += 1;
       continue;
@@ -105,7 +137,13 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       }
       const redir = tryRedirOp(source, j);
       if (redir) {
-        tokens.push({ type: "redir", op: redir.op, fd: source.slice(i, j) });
+        tokens.push({
+          type: "redir",
+          op: redir.op,
+          fd: source.slice(i, j),
+          pos: map.posAt(i),
+          end: map.posAt(j + redir.len),
+        });
         i = j + redir.len;
         atBoundary = true;
         continue;
@@ -122,7 +160,13 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
         if (c === ")") depth--;
         j++;
       }
-      tokens.push({ type: "arith-cmd", expr: source.slice(i + 2, j).trim() });
+      tokens.push({
+        type: "arith-cmd",
+        expr: source.slice(i + 2, j).trim(),
+        innerOffset: i + 2,
+        pos: map.posAt(i),
+        end: map.posAt(j + 2),
+      });
       i = j + 2;
       atBoundary = true;
       continue;
@@ -142,9 +186,22 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
         j++;
       }
       const raw = source.slice(i + 2, j - 1);
+      const partPos = map.posAt(i);
+      const partEnd = map.posAt(j);
       tokens.push({
         type: "word",
-        parts: [{ type: "proc-subst", op, raw }],
+        parts: [
+          {
+            type: "proc-subst",
+            op,
+            raw,
+            innerOffset: i + 2,
+            pos: partPos,
+            end: partEnd,
+          },
+        ],
+        pos: partPos,
+        end: partEnd,
       });
       i = j;
       atBoundary = false;
@@ -154,7 +211,12 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
     {
       const redir = tryRedirOp(source, i);
       if (redir) {
-        tokens.push({ type: "redir", op: redir.op });
+        tokens.push({
+          type: "redir",
+          op: redir.op,
+          pos: map.posAt(i),
+          end: map.posAt(i + redir.len),
+        });
         i += redir.len;
         atBoundary = true;
         continue;
@@ -162,41 +224,69 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
     }
 
     if (symbolChars.has(ch)) {
-      tokens.push({ type: "symbol", value: ch as SymbolTokenValue });
+      tokens.push({
+        type: "symbol",
+        value: ch as SymbolTokenValue,
+        pos: map.posAt(i),
+        end: map.posAt(i + 1),
+      });
       atBoundary = true;
       i += 1;
       continue;
     }
 
     if (source.startsWith("&&", i)) {
-      tokens.push({ type: "op", value: "&&" });
+      tokens.push({
+        type: "op",
+        value: "&&",
+        pos: map.posAt(i),
+        end: map.posAt(i + 2),
+      });
       atBoundary = true;
       i += 2;
       continue;
     }
 
     if (source.startsWith("||", i)) {
-      tokens.push({ type: "op", value: "||" });
+      tokens.push({
+        type: "op",
+        value: "||",
+        pos: map.posAt(i),
+        end: map.posAt(i + 2),
+      });
       atBoundary = true;
       i += 2;
       continue;
     }
 
     if (operatorChars.has(ch)) {
-      tokens.push({ type: "op", value: ch as ";" | "|" | "&" });
+      tokens.push({
+        type: "op",
+        value: ch as ";" | "|" | "&",
+        pos: map.posAt(i),
+        end: map.posAt(i + 1),
+      });
       atBoundary = true;
       i += 1;
       continue;
     }
 
+    const wordStart = i;
     const parts: TokenWordPart[] = [];
     let current = "";
+    let litStart = i;
 
     const flushLit = () => {
       if (current.length > 0) {
-        parts.push({ type: "lit", value: current });
+        parts.push({
+          type: "lit",
+          value: current,
+          pos: map.posAt(litStart),
+          end: map.posAt(i),
+        });
         current = "";
       }
+      litStart = i;
     };
 
     while (i < source.length) {
@@ -204,12 +294,14 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
 
       if (currentChar === "\\" && source.charAt(i + 1) === "\n") {
         i += 2;
+        litStart = i;
         continue;
       }
 
       if (currentChar === "\\" && source.charAt(i + 1) === "\r") {
         if (source.charAt(i + 2) === "\n") {
           i += 3;
+          litStart = i;
           continue;
         }
       }
@@ -228,6 +320,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
 
       if (currentChar === "'") {
         flushLit();
+        const sglStart = i;
         i += 1;
         const start = i;
         while (i < source.length && source.charAt(i) !== "'") {
@@ -236,21 +329,35 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
         if (i >= source.length) {
           throw new Error("Unclosed single quote");
         }
-        parts.push({ type: "sgl", value: source.slice(start, i) });
+        parts.push({
+          type: "sgl",
+          value: source.slice(start, i),
+          pos: map.posAt(sglStart),
+          end: map.posAt(i + 1),
+        });
         i += 1;
+        litStart = i;
         continue;
       }
 
       if (currentChar === '"') {
         flushLit();
+        const dblStart = i;
         i += 1;
         const dblParts: TokenWordPart[] = [];
         let dblBuf = "";
+        let dblLitStart = i;
         const flushDblLit = () => {
           if (dblBuf.length > 0) {
-            dblParts.push({ type: "lit", value: dblBuf });
+            dblParts.push({
+              type: "lit",
+              value: dblBuf,
+              pos: map.posAt(dblLitStart),
+              end: map.posAt(i),
+            });
             dblBuf = "";
           }
+          dblLitStart = i;
         };
         let closed = false;
         while (i < source.length) {
@@ -272,10 +379,11 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
           }
           if (dqChar === "$") {
             flushDblLit();
-            const exp = scanExpansion(source, i);
+            const exp = scanExpansion(source, i, map);
             if (exp) {
               dblParts.push(exp.part);
               i = exp.end;
+              dblLitStart = i;
               continue;
             }
             dblBuf += dqChar;
@@ -284,9 +392,10 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
           }
           if (dqChar === "`") {
             flushDblLit();
-            const bt = scanBacktick(source, i);
+            const bt = scanBacktick(source, i, map);
             dblParts.push(bt.part);
             i = bt.end;
+            dblLitStart = i;
             continue;
           }
           if (dqChar === '"') {
@@ -301,18 +410,26 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
           throw new Error("Unclosed double quote");
         }
         flushDblLit();
-        parts.push({ type: "dbl", parts: dblParts });
+        parts.push({
+          type: "dbl",
+          parts: dblParts,
+          pos: map.posAt(dblStart),
+          end: map.posAt(i),
+        });
+        litStart = i;
         continue;
       }
 
       if (currentChar === "$") {
-        flushLit();
-        const exp = scanExpansion(source, i);
+        const exp = scanExpansion(source, i, map);
         if (exp) {
+          flushLit();
           parts.push(exp.part);
           i = exp.end;
+          litStart = i;
           continue;
         }
+        // Bare $ — treat as literal char.
         current += currentChar;
         i += 1;
         continue;
@@ -320,9 +437,10 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
 
       if (currentChar === "`") {
         flushLit();
-        const bt = scanBacktick(source, i);
+        const bt = scanBacktick(source, i, map);
         parts.push(bt.part);
         i = bt.end;
+        litStart = i;
         continue;
       }
 
@@ -336,7 +454,12 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       throw new Error("Unexpected character");
     }
 
-    tokens.push({ type: "word", parts });
+    tokens.push({
+      type: "word",
+      parts,
+      pos: map.posAt(wordStart),
+      end: map.posAt(i),
+    });
     atBoundary = false;
   }
 

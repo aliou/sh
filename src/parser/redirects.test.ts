@@ -11,7 +11,7 @@ import {
 
 describe("parse (phase 3: assignments and redirects)", () => {
   it("parses assignment-only commands", () => {
-    expect(parse("a=b")).toEqual({
+    expect(parse("a=b")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -22,7 +22,7 @@ describe("parse (phase 3: assignments and redirects)", () => {
   });
 
   it("parses assignments before words", () => {
-    expect(parse("a=b foo")).toEqual({
+    expect(parse("a=b foo")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -34,7 +34,7 @@ describe("parse (phase 3: assignments and redirects)", () => {
   });
 
   it("parses redirects", () => {
-    expect(parse("foo >out")).toEqual({
+    expect(parse("foo >out")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -44,7 +44,7 @@ describe("parse (phase 3: assignments and redirects)", () => {
       ),
     });
 
-    expect(parse(">out foo")).toEqual({
+    expect(parse(">out foo")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -56,7 +56,7 @@ describe("parse (phase 3: assignments and redirects)", () => {
   });
 
   it("parses redirects with file descriptors", () => {
-    expect(parse("foo 2>out")).toEqual({
+    expect(parse("foo 2>out")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -78,7 +78,7 @@ describe("parse (phase 12: extended redirects)", () => {
     { input: "foo <<<bar", op: "<<<" as RedirOp, target: "bar" },
     { input: "foo <>bar", op: "<>" as RedirOp, target: "bar" },
   ])("parses $op redirect", ({ input, op, target }) => {
-    expect(parse(input)).toEqual({
+    expect(parse(input)).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -90,7 +90,7 @@ describe("parse (phase 12: extended redirects)", () => {
   });
 
   it("parses fd dup with explicit fd 2>&1", () => {
-    expect(parse("foo 2>&1")).toEqual({
+    expect(parse("foo 2>&1")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",

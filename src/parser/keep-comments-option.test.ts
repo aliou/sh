@@ -9,7 +9,7 @@ describe("parse (phase 27: comments)", () => {
 
   it("collects comments when keepComments is true", () => {
     const result = parse("echo hi # a comment", { keepComments: true });
-    expect(result.ast.comments).toEqual([
+    expect(result.ast.comments).toMatchAst([
       { type: "Comment", text: " a comment" },
     ]);
   });
@@ -18,7 +18,7 @@ describe("parse (phase 27: comments)", () => {
     const result = parse("# first\necho hi\n# second", {
       keepComments: true,
     });
-    expect(result.ast.comments).toEqual([
+    expect(result.ast.comments).toMatchAst([
       { type: "Comment", text: " first" },
       { type: "Comment", text: " second" },
     ]);
@@ -26,7 +26,7 @@ describe("parse (phase 27: comments)", () => {
 
   it("collects inline comment after semicolon", () => {
     const result = parse("echo hi; # trailing", { keepComments: true });
-    expect(result.ast.comments).toEqual([
+    expect(result.ast.comments).toMatchAst([
       { type: "Comment", text: " trailing" },
     ]);
   });

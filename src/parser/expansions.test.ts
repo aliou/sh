@@ -16,7 +16,7 @@ import {
 
 describe("parse (phase 15: parameter expansion)", () => {
   it("parses $var", () => {
-    expect(parse("echo $foo")).toEqual({
+    expect(parse("echo $foo")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -27,7 +27,7 @@ describe("parse (phase 15: parameter expansion)", () => {
   });
 
   it("parses ${var}", () => {
-    expect(parse("echo ${foo}")).toEqual({
+    expect(parse("echo ${foo}")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -38,7 +38,7 @@ describe("parse (phase 15: parameter expansion)", () => {
   });
 
   it("parses ${var:-default}", () => {
-    expect(parse("echo ${foo:-bar}")).toEqual({
+    expect(parse("echo ${foo:-bar}")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -49,7 +49,7 @@ describe("parse (phase 15: parameter expansion)", () => {
   });
 
   it("parses $var inside double quotes", () => {
-    expect(parse('"hello $name"')).toEqual({
+    expect(parse('"hello $name"')).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -60,7 +60,7 @@ describe("parse (phase 15: parameter expansion)", () => {
   });
 
   it("parses special params $? $# $@", () => {
-    expect(parse("echo $?")).toEqual({
+    expect(parse("echo $?")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -73,7 +73,7 @@ describe("parse (phase 15: parameter expansion)", () => {
 
 describe("parse (phase 16: command substitution)", () => {
   it("parses $(cmd)", () => {
-    expect(parse("echo $(foo)")).toEqual({
+    expect(parse("echo $(foo)")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -84,7 +84,7 @@ describe("parse (phase 16: command substitution)", () => {
   });
 
   it("parses backtick substitution", () => {
-    expect(parse("echo `foo`")).toEqual({
+    expect(parse("echo `foo`")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -95,7 +95,7 @@ describe("parse (phase 16: command substitution)", () => {
   });
 
   it("parses $(cmd) inside double quotes", () => {
-    expect(parse('"$(foo)"')).toEqual({
+    expect(parse('"$(foo)"')).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -108,7 +108,7 @@ describe("parse (phase 16: command substitution)", () => {
 
 describe("parse (phase 17: arithmetic expansion)", () => {
   it("parses $((expr))", () => {
-    expect(parse("echo $((1 + 2))")).toEqual({
+    expect(parse("echo $((1 + 2))")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -121,7 +121,7 @@ describe("parse (phase 17: arithmetic expansion)", () => {
 
 describe("parse (phase 19: process substitution)", () => {
   it("parses <() process substitution", () => {
-    expect(parse("diff <(foo) <(bar)")).toEqual({
+    expect(parse("diff <(foo) <(bar)")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -146,7 +146,7 @@ describe("parse (phase 19: process substitution)", () => {
 
 describe("parse (phase 20: mixed expansions)", () => {
   it("parses mixed literal and expansion in word", () => {
-    expect(parse("echo foo${bar}baz")).toEqual({
+    expect(parse("echo foo${bar}baz")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",
@@ -160,7 +160,7 @@ describe("parse (phase 20: mixed expansions)", () => {
   });
 
   it("parses nested command substitution", () => {
-    expect(parse("echo $(echo $(foo))")).toEqual({
+    expect(parse("echo $(echo $(foo))")).toMatchAst({
       ast: program(
         stmt({
           type: "SimpleCommand",

@@ -4,25 +4,25 @@ import { program, simple, stmt } from "../test-helpers/ast-builders";
 
 describe("parse (phase 1: simple commands)", () => {
   it("parses empty input", () => {
-    expect(parse("")).toEqual({ ast: program() });
+    expect(parse("")).toMatchAst({ ast: program() });
   });
 
   it("parses a single simple command", () => {
-    expect(parse("foo")).toEqual({ ast: program(stmt(simple("foo"))) });
+    expect(parse("foo")).toMatchAst({ ast: program(stmt(simple("foo"))) });
   });
 
   it("parses multiple statements separated by newline or semicolon", () => {
-    expect(parse("foo\nbar")).toEqual({
+    expect(parse("foo\nbar")).toMatchAst({
       ast: program(stmt(simple("foo")), stmt(simple("bar"))),
     });
 
-    expect(parse("foo; bar;")).toEqual({
+    expect(parse("foo; bar;")).toMatchAst({
       ast: program(stmt(simple("foo")), stmt(simple("bar"))),
     });
   });
 
   it("parses pipelines", () => {
-    expect(parse("foo | bar")).toEqual({
+    expect(parse("foo | bar")).toMatchAst({
       ast: program(
         stmt({
           type: "Pipeline",
@@ -31,7 +31,7 @@ describe("parse (phase 1: simple commands)", () => {
       ),
     });
 
-    expect(parse("foo | bar | baz")).toEqual({
+    expect(parse("foo | bar | baz")).toMatchAst({
       ast: program(
         stmt({
           type: "Pipeline",
@@ -46,7 +46,7 @@ describe("parse (phase 1: simple commands)", () => {
   });
 
   it("parses logical and/or", () => {
-    expect(parse("foo && bar")).toEqual({
+    expect(parse("foo && bar")).toMatchAst({
       ast: program(
         stmt({
           type: "Logical",
@@ -57,7 +57,7 @@ describe("parse (phase 1: simple commands)", () => {
       ),
     });
 
-    expect(parse("foo || bar")).toEqual({
+    expect(parse("foo || bar")).toMatchAst({
       ast: program(
         stmt({
           type: "Logical",
@@ -68,7 +68,7 @@ describe("parse (phase 1: simple commands)", () => {
       ),
     });
 
-    expect(parse("foo && bar || baz")).toEqual({
+    expect(parse("foo && bar || baz")).toMatchAst({
       ast: program(
         stmt({
           type: "Logical",
@@ -86,7 +86,7 @@ describe("parse (phase 1: simple commands)", () => {
   });
 
   it("gives pipelines higher precedence than logical ops", () => {
-    expect(parse("foo | bar || baz")).toEqual({
+    expect(parse("foo | bar || baz")).toMatchAst({
       ast: program(
         stmt({
           type: "Logical",
@@ -102,7 +102,7 @@ describe("parse (phase 1: simple commands)", () => {
   });
 
   it("parses background commands", () => {
-    expect(parse("foo &\nbar")).toEqual({
+    expect(parse("foo &\nbar")).toMatchAst({
       ast: program(stmt(simple("foo"), true), stmt(simple("bar"))),
     });
   });
@@ -110,7 +110,7 @@ describe("parse (phase 1: simple commands)", () => {
 
 describe("parse (phase 10: negation)", () => {
   it("parses negated commands", () => {
-    expect(parse("! foo")).toEqual({
+    expect(parse("! foo")).toMatchAst({
       ast: program(stmt(simple("foo"), false, true)),
     });
   });
