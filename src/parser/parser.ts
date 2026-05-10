@@ -29,6 +29,7 @@ import type {
   Word,
   WordPart,
 } from "../ast";
+import { checkLang } from "../dialect";
 import type {
   OpTokenValue,
   SymbolTokenValue,
@@ -381,6 +382,11 @@ export class Parser {
     if (token.type !== "arith-cmd") {
       throw new Error("Expected (( )) in c-style for");
     }
+    checkLang(this.options.dialect, startPos, "for ((", [
+      "bash",
+      "mksh",
+      "zsh",
+    ]);
     // Split expr on ";" into init, cond, post
     const parts = token.expr.split(";").map((s) => s.trim());
     const init = parts[0] || undefined;
@@ -408,6 +414,11 @@ export class Parser {
 
   private parseSelectClause(): SelectClause {
     const head = this.consumeKeyword("select");
+    checkLang(this.options.dialect, head.pos, "select", [
+      "bash",
+      "mksh",
+      "zsh",
+    ]);
     const nameToken = this.consume();
     if (nameToken.type !== "word") {
       throw new Error("Expected select variable name");
@@ -451,6 +462,11 @@ export class Parser {
     let startPos: Pos | undefined;
     if (this.matchKeyword("function")) {
       const fk = this.consumeKeyword("function");
+      checkLang(this.options.dialect, fk.pos, "function", [
+        "bash",
+        "mksh",
+        "zsh",
+      ]);
       startPos = fk.pos;
     }
     const nameToken = this.consume();
@@ -543,6 +559,7 @@ export class Parser {
 
   private parseTestClause(): TestClause {
     const open = this.consumeKeyword("[[");
+    checkLang(this.options.dialect, open.pos, "[[", ["bash", "mksh", "zsh"]);
     const words: Word[] = [];
     while (!this.matchKeyword("]]")) {
       if (this.isEof()) throw new Error("Unclosed [[");
@@ -567,6 +584,11 @@ export class Parser {
     const token = this.consume();
     if (token.type !== "arith-cmd")
       throw new Error("Expected arithmetic command");
+    checkLang(this.options.dialect, token.pos, "(( ))", [
+      "bash",
+      "mksh",
+      "zsh",
+    ]);
     return {
       type: "ArithCmd",
       expr: token.expr,
@@ -577,6 +599,7 @@ export class Parser {
 
   private parseCoprocClause(): CoprocClause {
     const head = this.consumeKeyword("coproc");
+    checkLang(this.options.dialect, head.pos, "coproc", ["bash", "zsh"]);
     if (this.matchWord() && this.peekToken(1)?.type === "symbol") {
       const nameToken = this.peek();
       if (
@@ -650,6 +673,15 @@ export class Parser {
       throw new Error("Expected decl keyword");
     }
     const variant = tokenPartsText(variantToken.parts) as DeclClause["variant"];
+    // POSIX only standardizes `export` and `readonly`. Bash/mksh/zsh add the
+    // others (`declare`, `local`, `typeset`, `nameref`).
+    if (variant !== "export" && variant !== "readonly") {
+      checkLang(this.options.dialect, variantToken.pos, variant, [
+        "bash",
+        "mksh",
+        "zsh",
+      ]);
+    }
 
     const args: Word[] = [];
     const assigns: Assignment[] = [];
@@ -694,6 +726,7 @@ export class Parser {
 
   private parseLetClause(): LetClause {
     const letTok = this.consumeKeyword("let");
+    checkLang(this.options.dialect, letTok.pos, "let", ["bash", "mksh", "zsh"]);
     const exprs: Word[] = [];
     const redirects: Redirect[] = [];
 
@@ -976,8 +1009,17 @@ export class Parser {
       nextToken?.type === "symbol" &&
       (nextToken as { value: string }).value === "("
     ) {
+      checkLang(this.options.dialect, token.pos, "array assignment", [
+        "bash",
+        "mksh",
+        "zsh",
+      ]);
       this.consume(); // consume the NAME= word
       return this.parseArrayAssignment(name, append, token.pos);
+    }
+
+    if (append) {
+      checkLang(this.options.dialect, token.pos, "+=", ["bash", "mksh", "zsh"]);
     }
 
     this.consume();

@@ -1,3 +1,5 @@
+import type { ParseOptions } from "../ast";
+import { checkLang } from "../dialect";
 import { isDigit, isNameChar, isNameStart, specialParams } from "./charsets";
 import type { SourceMap } from "./cursor";
 import type { TokenWordPart } from "./types";
@@ -6,6 +8,7 @@ export function scanExpansion(
   source: string,
   pos: number,
   map: SourceMap,
+  options: ParseOptions = {},
 ): { part: TokenWordPart; end: number } | null {
   if (source.charAt(pos) !== "$") return null;
   const next = source.charAt(pos + 1);
@@ -70,6 +73,14 @@ export function scanExpansion(
       j++;
     }
     const inner = source.slice(pos + 2, j - 1);
+    // mksh forbids `${!name*}` and `${!name@}` (the indirect listing forms);
+    // bash allows them. Detect the pattern early so we can flag it.
+    if (
+      inner.charAt(0) === "!" &&
+      /^![A-Za-z_][A-Za-z0-9_]*[*@]$/.test(inner)
+    ) {
+      checkLang(options.dialect, map.posAt(pos), "${!name*}", ["bash", "zsh"]);
+    }
     // Parse inner: name then optional op and value
     let nameEnd = 0;
     // Skip optional ! # prefix
