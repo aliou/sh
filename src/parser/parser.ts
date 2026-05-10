@@ -100,6 +100,27 @@ function strToWord(value: string): Word {
   return { type: "Word", parts: [{ type: "Literal", value }] };
 }
 
+/** Human-readable description of a token, for error messages. */
+function describeToken(token: Token | undefined): string {
+  if (!token) return "";
+  switch (token.type) {
+    case "op":
+      return token.value;
+    case "redir":
+      return token.op;
+    case "symbol":
+      return token.value;
+    case "arith-cmd":
+      return "(( ... ))";
+    case "heredoc-body":
+      return "<<heredoc>>";
+    case "comment":
+      return `#${token.text}`;
+    case "word":
+      return tokenPartsText(token.parts);
+  }
+}
+
 /** Split `s` on `delim`, ignoring delimiters nested inside parentheses. */
 function splitAtTopLevel(s: string, delim: string): string[] {
   const parts: string[] = [];
@@ -219,25 +240,8 @@ export class Parser {
   }
 
   assertEof() {
-    if (!this.isEof()) {
-      const token = this.peek();
-      const display = token
-        ? token.type === "op"
-          ? token.value
-          : token.type === "redir"
-            ? token.op
-            : token.type === "symbol"
-              ? token.value
-              : token.type === "arith-cmd"
-                ? "(( ... ))"
-                : token.type === "heredoc-body"
-                  ? "<<heredoc>>"
-                  : token.type === "comment"
-                    ? `#${token.text}`
-                    : tokenPartsText(token.parts)
-        : "";
-      throw new Error(`Unexpected token: ${display}`);
-    }
+    if (this.isEof()) return;
+    throw new Error(`Unexpected token: ${describeToken(this.peek())}`);
   }
 
   private parseStatement(): Statement {
@@ -376,6 +380,22 @@ export class Parser {
     return { type: "Block", body, pos: open.pos, end: close.end };
   }
 
+  /**
+   * Read an optional `in word1 word2 ...` clause used by `for` and `select`,
+   * up to `do`. Returns `undefined` if there's no `in` keyword.
+   */
+  private collectLoopItems(): Word[] | undefined {
+    if (!this.matchKeyword("in")) return undefined;
+    this.consumeKeyword("in");
+    const items: Word[] = [];
+    while (this.matchWord() && !this.matchKeyword("do")) {
+      const tok = this.consume();
+      if (tok.type !== "word") throw new Error("Expected loop item word");
+      items.push(this.wordFromToken(tok));
+    }
+    return items.length > 0 ? items : undefined;
+  }
+
   private parseStatementList(endSymbol: SymbolTokenValue): Statement[] {
     const body: Statement[] = [];
     this.skipSeparators();
@@ -391,72 +411,44 @@ export class Parser {
     return body;
   }
 
-  private parseIfClause(): IfClause {
-    const ifTok = this.consumeKeyword("if");
+  /**
+   * Parse an `if`/`elif` chain starting at the head keyword. The caller has
+   * already verified the head is `head` (either `"if"` or `"elif"`). The
+   * outermost call consumes the trailing `fi`; recursive elif calls don't.
+   */
+  private parseIfChain(head: "if" | "elif"): IfClause {
+    const headTok = this.consumeKeyword(head);
     const cond = this.parseStatementsUntilKeyword(["then"]);
     this.consumeKeyword("then");
     const thenBranch = this.parseStatementsUntilKeyword(["else", "elif", "fi"]);
     let elseBranch: Statement[] | undefined;
     if (this.matchKeyword("elif")) {
-      const elif = this.parseElifClause();
-      elseBranch = [this.wrapStatement(elif)];
-    } else if (this.matchKeyword("else")) {
-      this.consumeKeyword("else");
-      elseBranch = this.parseStatementsUntilKeyword(["fi"]);
-    }
-    const fi = this.consumeKeyword("fi");
-    return elseBranch
-      ? {
-          type: "IfClause",
-          cond,
-          // biome-ignore lint/suspicious/noThenProperty: shell AST field
-          then: thenBranch,
-          else: elseBranch,
-          pos: ifTok.pos,
-          end: fi.end,
-        }
-      : {
-          type: "IfClause",
-          cond,
-          // biome-ignore lint/suspicious/noThenProperty: shell AST field
-          then: thenBranch,
-          pos: ifTok.pos,
-          end: fi.end,
-        };
-  }
-
-  private parseElifClause(): IfClause {
-    const elif = this.consumeKeyword("elif");
-    const cond = this.parseStatementsUntilKeyword(["then"]);
-    this.consumeKeyword("then");
-    const thenBranch = this.parseStatementsUntilKeyword(["else", "elif", "fi"]);
-    let elseBranch: Statement[] | undefined;
-    if (this.matchKeyword("elif")) {
-      const inner = this.parseElifClause();
+      const inner = this.parseIfChain("elif");
       elseBranch = [this.wrapStatement(inner)];
     } else if (this.matchKeyword("else")) {
       this.consumeKeyword("else");
       elseBranch = this.parseStatementsUntilKeyword(["fi"]);
     }
-    const lastEnd = this.lastEnd() ?? elif.end;
-    return elseBranch
-      ? {
-          type: "IfClause",
-          cond,
-          // biome-ignore lint/suspicious/noThenProperty: shell AST field
-          then: thenBranch,
-          else: elseBranch,
-          pos: elif.pos,
-          end: lastEnd,
-        }
-      : {
-          type: "IfClause",
-          cond,
-          // biome-ignore lint/suspicious/noThenProperty: shell AST field
-          then: thenBranch,
-          pos: elif.pos,
-          end: lastEnd,
-        };
+    // Only the outermost `if` consumes `fi`; recursive `elif` rides on the
+    // outer call's eventual consumption.
+    const endPos =
+      head === "if"
+        ? this.consumeKeyword("fi").end
+        : (this.lastEnd() ?? headTok.end);
+    const node: IfClause = {
+      type: "IfClause",
+      cond,
+      // biome-ignore lint/suspicious/noThenProperty: shell AST field
+      then: thenBranch,
+      pos: headTok.pos,
+      end: endPos,
+    };
+    if (elseBranch) node.else = elseBranch;
+    return node;
+  }
+
+  private parseIfClause(): IfClause {
+    return this.parseIfChain("if");
   }
 
   private parseWhileClause(until: boolean): WhileClause {
@@ -496,21 +488,7 @@ export class Parser {
       throw new Error("Expected loop variable name");
     }
     const name = tokenPartsText(nameToken.parts);
-    let items: Word[] | undefined;
-    if (this.matchKeyword("in")) {
-      this.consumeKeyword("in");
-      const collected: Word[] = [];
-      while (this.matchWord() && !this.matchKeyword("do")) {
-        const itemToken = this.consume();
-        if (itemToken.type !== "word") {
-          throw new Error("Expected loop item word");
-        }
-        collected.push(this.wordFromToken(itemToken));
-      }
-      if (collected.length > 0) {
-        items = collected;
-      }
-    }
+    const items = this.collectLoopItems();
     if (this.matchOp(";")) {
       this.consume();
     }
@@ -536,32 +514,17 @@ export class Parser {
 
     // Split inner on `;` boundaries (top-level only) and parse each piece
     // as its own arithmetic expression. Empty clauses are allowed.
-    const segments = splitAtTopLevel(token.expr, ";");
-    const segmentsRaw = segments.map((s) => s.trim());
-    const init = segmentsRaw[0]
-      ? parseArithmetic(
-          segmentsRaw[0],
-          token.innerOffset,
-          token.pos.line,
-          token.pos.col + 2,
-        )
-      : undefined;
-    const cond = segmentsRaw[1]
-      ? parseArithmetic(
-          segmentsRaw[1],
-          token.innerOffset,
-          token.pos.line,
-          token.pos.col + 2,
-        )
-      : undefined;
-    const post = segmentsRaw[2]
-      ? parseArithmetic(
-          segmentsRaw[2],
-          token.innerOffset,
-          token.pos.line,
-          token.pos.col + 2,
-        )
-      : undefined;
+    const base = {
+      offset: token.innerOffset,
+      line: token.pos.line,
+      col: token.pos.col + 2,
+    };
+    const [initRaw, condRaw, postRaw] = splitAtTopLevel(token.expr, ";").map(
+      (s) => s.trim(),
+    );
+    const init = initRaw ? parseArithmetic(initRaw, base) : undefined;
+    const cond = condRaw ? parseArithmetic(condRaw, base) : undefined;
+    const post = postRaw ? parseArithmetic(postRaw, base) : undefined;
 
     if (this.matchOp(";")) {
       this.consume();
@@ -839,12 +802,11 @@ export class Parser {
       "mksh",
       "zsh",
     ]);
-    const x = parseArithmetic(
-      token.expr,
-      token.innerOffset,
-      token.pos.line,
-      token.pos.col + 2,
-    );
+    const x = parseArithmetic(token.expr, {
+      offset: token.innerOffset,
+      line: token.pos.line,
+      col: token.pos.col + 2,
+    });
     if (!x) {
       throw new Error("Empty arithmetic command");
     }
@@ -1169,12 +1131,11 @@ export class Parser {
         };
       }
       case "arith-exp": {
-        const x = parseArithmetic(
-          part.raw,
-          part.innerOffset,
-          part.pos.line,
-          part.pos.col + 3,
-        );
+        const x = parseArithmetic(part.raw, {
+          offset: part.innerOffset,
+          line: part.pos.line,
+          col: part.pos.col + 3,
+        });
         if (!x) {
           throw new Error("Empty arithmetic expansion");
         }
