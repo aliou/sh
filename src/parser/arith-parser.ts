@@ -7,33 +7,43 @@ import type {
   UnaryArithm,
   UnaryArithmOp,
 } from "../ast";
+import {
+  isDigit,
+  isHexDigit,
+  isNameChar,
+  isNameStart,
+} from "../tokenizer/charsets";
+import { SourceMap } from "../tokenizer/cursor";
 
 /**
- * Parse a Bash arithmetic expression (the inside of `(( ... ))` or
- * `$(( ... ))` or each clause of a C-style for loop) into an `ArithExpr`
- * tree.
- *
- * `baseOffset` is the offset of the first character of `source` within the
- * containing parser's source string, so that positions on returned nodes
- * are absolute to the original input.
- *
- * Returns `undefined` for an empty/whitespace-only input.
+ * Anchor describing where `source` lives in the original input, so the
+ * positions we attach to nodes are absolute.
+ */
+export type ArithBase = {
+  /** Absolute offset of `source[0]` in the original input. */
+  offset: number;
+  /** 1-indexed line of `source[0]` in the original input. */
+  line: number;
+  /** 1-indexed column of `source[0]` in the original input. */
+  col: number;
+};
+
+/**
+ * Parse a Bash arithmetic expression (the inside of `(( ... ))`,
+ * `$(( ... ))`, or one clause of a C-style for loop) into an `ArithExpr`
+ * tree. Returns `undefined` for empty/whitespace-only input.
  */
 export function parseArithmetic(
   source: string,
-  baseOffset: number,
-  baseLine: number,
-  baseCol: number,
+  base: ArithBase,
 ): ArithExpr | undefined {
   const tokens = tokenizeArith(source);
   if (tokens.length === 0) return undefined;
   const ctx: Ctx = {
     tokens,
     index: 0,
-    baseOffset,
-    baseLine,
-    baseCol,
-    source,
+    base,
+    map: new SourceMap(source),
   };
   const expr = parseExpr(ctx, 0);
   if (ctx.index < ctx.tokens.length) {
@@ -58,12 +68,6 @@ type ArithTok =
   | { type: "op"; value: string; offset: number }
   | { type: "lparen"; offset: number }
   | { type: "rparen"; offset: number };
-
-const isAlpha = (c: string) =>
-  (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_";
-const isAlnum = (c: string) => isAlpha(c) || (c >= "0" && c <= "9");
-const isHex = (c: string) =>
-  (c >= "0" && c <= "9") || (c >= "a" && c <= "f") || (c >= "A" && c <= "F");
 
 /** Operators tried longest-first. */
 const OPS = [
@@ -127,32 +131,31 @@ function tokenizeArith(s: string): ArithTok[] {
       continue;
     }
     if (c === "$") {
-      // `$name` inside arithmetic is treated as the variable's value;
-      // we keep the leading `$` so the parser can build a ParamExp.
+      // `$name` in arithmetic context is folded into a ParamExp later; the
+      // leading `$` is dropped here since the name token suffices.
       let j = i + 1;
-      if (j < s.length && (isAlpha(s.charAt(j)) || /\d/.test(s.charAt(j)))) {
-        while (j < s.length && isAlnum(s.charAt(j))) j++;
+      if (j < s.length && (isNameStart(s.charAt(j)) || isDigit(s.charAt(j)))) {
+        while (j < s.length && isNameChar(s.charAt(j))) j++;
         toks.push({ type: "name", value: s.slice(i + 1, j), offset: i });
         i = j;
         continue;
       }
     }
-    if (c >= "0" && c <= "9") {
+    if (isDigit(c)) {
       let j = i + 1;
-      // 0x.. hex
       if (c === "0" && (s.charAt(j) === "x" || s.charAt(j) === "X")) {
         j++;
-        while (j < s.length && isHex(s.charAt(j))) j++;
+        while (j < s.length && isHexDigit(s.charAt(j))) j++;
       } else {
-        while (j < s.length && /\d/.test(s.charAt(j))) j++;
+        while (j < s.length && isDigit(s.charAt(j))) j++;
       }
       toks.push({ type: "num", value: s.slice(i, j), offset: i });
       i = j;
       continue;
     }
-    if (isAlpha(c)) {
+    if (isNameStart(c)) {
       let j = i + 1;
-      while (j < s.length && isAlnum(s.charAt(j))) j++;
+      while (j < s.length && isNameChar(s.charAt(j))) j++;
       toks.push({ type: "name", value: s.slice(i, j), offset: i });
       i = j;
       continue;
@@ -226,46 +229,34 @@ const UNARY_PREFIX = new Set(["+", "-", "!", "~", "++", "--"]);
 interface Ctx {
   tokens: ArithTok[];
   index: number;
-  source: string;
-  baseOffset: number;
-  baseLine: number;
-  baseCol: number;
+  base: ArithBase;
+  map: SourceMap;
 }
 
 const peek = (ctx: Ctx) => ctx.tokens[ctx.index];
 const advance = (ctx: Ctx) => ctx.tokens[ctx.index++];
 
+/**
+ * Compute the absolute (pos, end) for a span of arithmetic source.
+ * Uses the SourceMap's binary-search `posAt` and translates by the base
+ * anchor. The first line of the inner source is on the same line as the
+ * containing `(( `, so its column needs the base offset added.
+ */
 function posOf(ctx: Ctx, offset: number, length = 1): { pos: Pos; end: Pos } {
-  // Compute (line, col) within `ctx.source`, then translate to the
-  // original by adding the base offset/line/col. Newlines inside arithmetic
-  // are unusual; this stays correct for the common single-line case.
-  let line = ctx.baseLine;
-  let col = ctx.baseCol;
-  for (let i = 0; i < offset; i++) {
-    if (ctx.source.charCodeAt(i) === 10 /* \n */) {
-      line += 1;
-      col = 1;
-    } else {
-      col += 1;
-    }
-  }
-  const pos: Pos = { offset: ctx.baseOffset + offset, line, col };
-  let endLine = line;
-  let endCol = col;
-  for (let i = offset; i < offset + length; i++) {
-    if (ctx.source.charCodeAt(i) === 10) {
-      endLine += 1;
-      endCol = 1;
-    } else {
-      endCol += 1;
-    }
-  }
-  const end: Pos = {
-    offset: ctx.baseOffset + offset + length,
-    line: endLine,
-    col: endCol,
+  return {
+    pos: translate(ctx, offset),
+    end: translate(ctx, offset + length),
   };
-  return { pos, end };
+}
+
+function translate(ctx: Ctx, offset: number): Pos {
+  const inner = ctx.map.posAt(offset);
+  const onFirstLine = inner.line === 1;
+  return {
+    offset: ctx.base.offset + offset,
+    line: ctx.base.line + (inner.line - 1),
+    col: onFirstLine ? ctx.base.col + (inner.col - 1) : inner.col,
+  };
 }
 
 function parseExpr(ctx: Ctx, minPrec: number): ArithExpr {

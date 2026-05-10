@@ -1,4 +1,5 @@
 import type { BraceExp, Literal, Word, WordPart } from "./ast";
+import { isAsciiLetter, isInteger } from "./tokenizer/charsets";
 
 /**
  * Parse Bash brace expansions inside a word's literal parts, replacing them
@@ -19,10 +20,7 @@ export function splitBraces(word: Word): boolean {
   let cur: BraceExp | undefined;
   const open: BraceExp[] = [];
 
-  const litLeft = (): Literal => ({ type: "Literal", value: "{" });
-  const litRight = (): Literal => ({ type: "Literal", value: "}" });
-  const litComma = (): Literal => ({ type: "Literal", value: "," });
-  const litDots = (): Literal => ({ type: "Literal", value: ".." });
+  const fixedLit = (value: string): Literal => ({ type: "Literal", value });
 
   const addLit = (l: WordPart) => {
     acc.parts.push(l);
@@ -109,10 +107,10 @@ export function splitBraces(word: Word): boolean {
           const br = pop();
           if (br.elems.length === 1) {
             // Single-element braces collapse back to literals.
-            addLit(litLeft());
+            addLit(fixedLit("{"));
             const only = br.elems[0];
             if (only) acc.parts.push(...only.parts);
-            addLit(litRight());
+            addLit(fixedLit("}"));
             break;
           }
           if (!br.sequence) {
@@ -124,13 +122,13 @@ export function splitBraces(word: Word): boolean {
             break;
           }
           // Broken sequence falls back to literals: { e1 .. e2 [.. e3] }
-          addLit(litLeft());
+          addLit(fixedLit("{"));
           for (let i = 0; i < br.elems.length; i++) {
-            if (i > 0) addLit(litDots());
+            if (i > 0) addLit(fixedLit(".."));
             const e = br.elems[i];
             if (e) acc.parts.push(...e.parts);
           }
-          addLit(litRight());
+          addLit(fixedLit("}"));
           break;
         }
         default: {
@@ -151,9 +149,9 @@ export function splitBraces(word: Word): boolean {
   // Unclosed open braces fall back to plain literals.
   while (acc !== top) {
     const br = pop();
-    addLit(litLeft());
+    addLit(fixedLit("{"));
     for (let i = 0; i < br.elems.length; i++) {
-      if (i > 0) addLit(br.sequence ? litDots() : litComma());
+      if (i > 0) addLit(br.sequence ? fixedLit("..") : fixedLit(","));
       const e = br.elems[i];
       if (e) acc.parts.push(...e.parts);
     }
@@ -169,11 +167,9 @@ function validSequence(br: BraceExp): boolean {
   const a = wordLiteralValue(br.elems[0]);
   const b = wordLiteralValue(br.elems[1]);
   if (a === undefined || b === undefined) return false;
-  const aIsChar = isAsciiLetter(a);
-  const bIsChar = isAsciiLetter(b);
-  const aIsInt = isInteger(a);
-  const bIsInt = isInteger(b);
-  if (!((aIsChar && bIsChar) || (aIsInt && bIsInt))) return false;
+  const aIsChar = a.length === 1 && isAsciiLetter(a);
+  const bIsChar = b.length === 1 && isAsciiLetter(b);
+  if (!((aIsChar && bIsChar) || (isInteger(a) && isInteger(b)))) return false;
   if (br.elems.length === 3) {
     const c = wordLiteralValue(br.elems[2]);
     if (c === undefined || !isInteger(c)) return false;
@@ -185,28 +181,8 @@ function wordLiteralValue(w: Word | undefined): string | undefined {
   if (!w) return undefined;
   let out = "";
   for (const p of w.parts) {
-    if (p.type === "Literal") out += p.value;
-    else return undefined;
+    if (p.type !== "Literal") return undefined;
+    out += p.value;
   }
   return out;
-}
-
-function isAsciiLetter(s: string): boolean {
-  if (s.length !== 1) return false;
-  const code = s.charCodeAt(0);
-  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
-}
-
-function isInteger(s: string): boolean {
-  if (s.length === 0) return false;
-  let i = 0;
-  if (s[0] === "+" || s[0] === "-") {
-    if (s.length === 1) return false;
-    i = 1;
-  }
-  for (; i < s.length; i++) {
-    const ch = s.charCodeAt(i);
-    if (ch < 48 || ch > 57) return false;
-  }
-  return true;
 }

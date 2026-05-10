@@ -83,50 +83,35 @@ export function scanExpansion(
     return { part, end: j };
   }
 
-  // $name or $N or $@ etc
+  // $name (long), $N (digit), or $@/$?/$# (special)
   if (isNameStart(next)) {
     let j = pos + 2;
-    while (j < source.length && isNameChar(source.charAt(j))) {
-      j++;
-    }
-    const name = source.slice(pos + 1, j);
-    return {
-      part: {
-        type: "param",
-        name,
-        braced: false,
-        pos: map.posAt(pos),
-        end: map.posAt(j),
-      },
-      end: j,
-    };
+    while (j < source.length && isNameChar(source.charAt(j))) j++;
+    return shortParam(source.slice(pos + 1, j), pos, j, map);
   }
-  if (isDigit(next)) {
-    return {
-      part: {
-        type: "param",
-        name: next,
-        braced: false,
-        pos: map.posAt(pos),
-        end: map.posAt(pos + 2),
-      },
-      end: pos + 2,
-    };
-  }
-  if (specialParams.has(next)) {
-    return {
-      part: {
-        type: "param",
-        name: next,
-        braced: false,
-        pos: map.posAt(pos),
-        end: map.posAt(pos + 2),
-      },
-      end: pos + 2,
-    };
+  if (isDigit(next) || specialParams.has(next)) {
+    return shortParam(next, pos, pos + 2, map);
   }
 
   return null;
+}
+
+function shortParam(
+  name: string,
+  start: number,
+  end: number,
+  map: SourceMap,
+): { part: TokenWordPart; end: number } {
+  return {
+    part: {
+      type: "param",
+      name,
+      braced: false,
+      pos: map.posAt(start),
+      end: map.posAt(end),
+    },
+    end,
+  };
 }
 
 /**

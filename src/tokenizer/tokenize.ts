@@ -14,6 +14,29 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   let atBoundary = true;
+  // Heredocs whose delimiter has been seen but body hasn't been collected yet,
+  // in order. Drained on each newline. Replaces an earlier O(n²) per-newline
+  // scan over all tokens.
+  const heredocQueue: { strip: boolean; delimiter: string }[] = [];
+
+  // Whenever a `<<` or `<<-` redir is followed by a delimiter word, queue it
+  // for the next newline.
+  const queueHeredocIfPending = () => {
+    const last = tokens[tokens.length - 1];
+    const prev = tokens[tokens.length - 2];
+    if (
+      prev &&
+      last &&
+      last.type === "word" &&
+      prev.type === "redir" &&
+      (prev.op === "<<" || prev.op === "<<-")
+    ) {
+      heredocQueue.push({
+        strip: prev.op === "<<-",
+        delimiter: tokenPartsText(last.parts),
+      });
+    }
+  };
 
   while (i < source.length) {
     const ch = source.charAt(i);
@@ -48,35 +71,14 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       atBoundary = true;
       i += 1;
 
-      // Check for pending heredocs by scanning recent tokens
-      const pendingHeredocs: { strip: boolean; delimiter: string }[] = [];
-      for (let ti = 0; ti < tokens.length; ti++) {
-        const t = tokens[ti];
-        if (
-          t &&
-          t.type === "redir" &&
-          (t.op === "<<" || t.op === "<<-") &&
-          !Object.hasOwn(t, "_collected")
-        ) {
-          const delimTok = tokens[ti + 1];
-          if (delimTok && delimTok.type === "word") {
-            pendingHeredocs.push({
-              strip: t.op === "<<-",
-              delimiter: tokenPartsText(delimTok.parts),
-            });
-            (t as Record<string, unknown>)._collected = true;
-          }
-        }
-      }
-
-      // Collect heredoc bodies
-      for (const hd of pendingHeredocs) {
+      // Drain any heredocs queued since the previous newline, in order.
+      while (heredocQueue.length > 0) {
+        const hd = heredocQueue.shift()!;
         const bodyStart = i;
         let body = "";
         while (i < source.length) {
           let lineEnd = source.indexOf("\n", i);
           if (lineEnd === -1) lineEnd = source.length;
-          // Strip an optional trailing CR for CRLF inputs.
           let realLineEnd = lineEnd;
           if (
             realLineEnd > i &&
@@ -85,10 +87,9 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
             realLineEnd -= 1;
           }
           const line = source.slice(i, realLineEnd);
-          const checkLine = hd.strip ? line.replace(/^\t+/, "") : line;
-          i = lineEnd < source.length ? lineEnd + 1 : lineEnd;
-          if (checkLine === hd.delimiter) break;
           const processedLine = hd.strip ? line.replace(/^\t+/, "") : line;
+          i = lineEnd < source.length ? lineEnd + 1 : lineEnd;
+          if (processedLine === hd.delimiter) break;
           body += `${processedLine}\n`;
         }
         tokens.push({
@@ -546,6 +547,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       pos: map.posAt(wordStart),
       end: map.posAt(i),
     });
+    queueHeredocIfPending();
     atBoundary = false;
   }
 
