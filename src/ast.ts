@@ -284,7 +284,64 @@ export type CaseClause = Located & {
   items: CaseItem[];
 };
 export type TimeClause = Located & { type: "TimeClause"; command: Statement };
-export type TestClause = Located & { type: "TestClause"; expr: Word[] };
+export type BinaryTestOp =
+  | "=="
+  | "!="
+  | "<"
+  | "<="
+  | ">"
+  | ">="
+  | "=~"
+  | "&&"
+  | "||"
+  | "="
+  | "-ef"
+  | "-nt"
+  | "-ot";
+
+export type UnaryTestOp =
+  | "!"
+  | "-e"
+  | "-f"
+  | "-d"
+  | "-r"
+  | "-w"
+  | "-x"
+  | "-z"
+  | "-n"
+  | "-s"
+  | "-a"
+  | "-o"
+  | "-S"
+  | "-c"
+  | "-b"
+  | "-p"
+  | "-h"
+  | "-L"
+  | "-N"
+  | "-O"
+  | "-G"
+  | "-u"
+  | "-g"
+  | "-k"
+  | "-t"
+  | "-v"
+  | "-R";
+
+export type BinaryTest = Located & {
+  type: "BinaryTest";
+  op: BinaryTestOp;
+  x: TestExpr;
+  y: TestExpr;
+};
+export type UnaryTest = Located & {
+  type: "UnaryTest";
+  op: UnaryTestOp;
+  x: TestExpr;
+};
+export type ParenTest = Located & { type: "ParenTest"; x: TestExpr };
+export type TestExpr = BinaryTest | UnaryTest | ParenTest | Word;
+export type TestClause = Located & { type: "TestClause"; x: TestExpr };
 export type ArithCmd = Located & { type: "ArithCmd"; x: ArithExpr };
 export type CoprocClause = Located & {
   type: "CoprocClause";

@@ -167,14 +167,25 @@ describe("parse (phase 11: time)", () => {
 
 describe("parse (phase 13: extended test)", () => {
   it("parses [[ ]]", () => {
-    expect(parse("[[ -f foo ]]")).toMatchAst({
-      ast: program(stmt(testClause(word("-f"), word("foo")))),
+    const { ast } = parse("[[ -f foo ]]");
+    const cmd = ast.body[0]?.command;
+    if (cmd?.type !== "TestClause") throw new Error("expected TestClause");
+    expect(cmd.x).toMatchAst({
+      type: "UnaryTest",
+      op: "-f",
+      x: { type: "Word", parts: [{ type: "Literal", value: "foo" }] },
     });
   });
 
   it("parses [[ with binary op ]]", () => {
-    expect(parse("[[ foo == bar ]]")).toMatchAst({
-      ast: program(stmt(testClause(word("foo"), word("=="), word("bar")))),
+    const { ast } = parse("[[ foo == bar ]]");
+    const cmd = ast.body[0]?.command;
+    if (cmd?.type !== "TestClause") throw new Error("expected TestClause");
+    expect(cmd.x).toMatchAst({
+      type: "BinaryTest",
+      op: "==",
+      x: { type: "Word", parts: [{ type: "Literal", value: "foo" }] },
+      y: { type: "Word", parts: [{ type: "Literal", value: "bar" }] },
     });
   });
 });

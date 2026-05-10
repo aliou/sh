@@ -121,10 +121,18 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
     }
 
     if (ch === "!" && atBoundary) {
-      // Prefer the extended-glob form `!(...)` over the negation operator,
-      // matching Bash where `!` only negates a command when it's a standalone
-      // word.
-      if (source.charAt(i + 1) !== "(") {
+      const next = source.charAt(i + 1);
+      // `!(` is extended glob — fall through to word parsing.
+      // `!` is the negation operator only when followed by a separator
+      // (space, tab, newline, EOF). Otherwise it's part of a word, e.g.
+      // `!=` inside `[[ ... ]]` or `!foo` as a literal.
+      const isNegation =
+        next === "" ||
+        next === " " ||
+        next === "\t" ||
+        next === "\n" ||
+        next === "\r";
+      if (next !== "(" && isNegation) {
         tokens.push({
           type: "op",
           value: "!",

@@ -2,6 +2,7 @@ import type {
   ArithCmd,
   ArrayElem,
   Assignment,
+  BinaryTestOp,
   Block,
   CaseClause,
   CaseItem,
@@ -25,7 +26,9 @@ import type {
   Statement,
   Subshell,
   TestClause,
+  TestExpr,
   TimeClause,
+  UnaryTestOp,
   WhileClause,
   Word,
   WordPart,
@@ -43,6 +46,49 @@ import { parseArithmetic } from "./arith-parser";
 import { DECL_KEYWORDS } from "./constants";
 
 const ZERO_POS: Pos = { offset: 0, line: 1, col: 1 };
+
+const TEST_UNARY_OPS = new Set<string>([
+  "-e",
+  "-f",
+  "-d",
+  "-r",
+  "-w",
+  "-x",
+  "-z",
+  "-n",
+  "-s",
+  "-a",
+  "-o",
+  "-S",
+  "-c",
+  "-b",
+  "-p",
+  "-h",
+  "-L",
+  "-N",
+  "-O",
+  "-G",
+  "-u",
+  "-g",
+  "-k",
+  "-t",
+  "-v",
+  "-R",
+]);
+
+const TEST_BINARY_OPS = new Set<string>([
+  "==",
+  "!=",
+  "<",
+  "<=",
+  ">",
+  ">=",
+  "=~",
+  "=",
+  "-ef",
+  "-nt",
+  "-ot",
+]);
 
 /**
  * Wrap a raw substring (e.g. a slice offset or a replacement pattern) as a
@@ -613,20 +659,100 @@ export class Parser {
   private parseTestClause(): TestClause {
     const open = this.consumeKeyword("[[");
     checkLang(this.options.dialect, open.pos, "[[", ["bash", "mksh", "zsh"]);
-    const words: Word[] = [];
-    while (!this.matchKeyword("]]")) {
-      if (this.isEof()) throw new Error("Unclosed [[");
-      const token = this.consume();
-      if (token.type !== "word") throw new Error("Expected word in [[ ]]");
-      words.push(this.wordFromToken(token));
-    }
+    const x = this.parseTestExpr(0);
     const close = this.consumeKeyword("]]");
     return {
       type: "TestClause",
-      expr: words,
+      x,
       pos: open.pos,
       end: close.end,
     };
+  }
+
+  private parseTestExpr(minPrec: number): TestExpr {
+    let left = this.parseTestPrimary();
+    while (true) {
+      const op = this.peekTestBinaryOp();
+      if (!op) break;
+      const prec = op === "||" ? 1 : op === "&&" ? 2 : 3;
+      if (prec < minPrec) break;
+      this.consumeTestOp(op);
+      const right = this.parseTestExpr(prec + 1);
+      left = {
+        type: "BinaryTest",
+        op,
+        x: left,
+        y: right,
+        pos: left.pos ?? ZERO_POS,
+        end: right.end ?? ZERO_POS,
+      };
+    }
+    return left;
+  }
+
+  private parseTestPrimary(): TestExpr {
+    // Negation
+    if (this.matchOp("!")) {
+      const op = this.consume();
+      const x = this.parseTestPrimary();
+      return {
+        type: "UnaryTest",
+        op: "!",
+        x,
+        pos: op.pos,
+        end: x.end ?? op.end,
+      };
+    }
+    // Parenthesized
+    if (this.matchSymbol("(")) {
+      const open = this.consumeSymbol("(");
+      const x = this.parseTestExpr(0);
+      const close = this.consumeSymbol(")");
+      return { type: "ParenTest", x, pos: open.pos, end: close.end };
+    }
+    // Unary file/string ops: a single token like `-e`/`-z`/...
+    const head = this.peek();
+    if (head && head.type === "word") {
+      const text = tokenPartsText(head.parts);
+      if (TEST_UNARY_OPS.has(text)) {
+        this.consume();
+        const arg = this.parseTestPrimary();
+        return {
+          type: "UnaryTest",
+          op: text as UnaryTestOp,
+          x: arg,
+          pos: head.pos,
+          end: arg.end ?? head.end,
+        };
+      }
+    }
+    // Otherwise a Word leaf (possibly followed by a binary op).
+    if (this.matchWord()) {
+      const tok = this.consume();
+      if (tok.type !== "word") throw new Error("expected word in [[ ]]");
+      return this.wordFromToken(tok);
+    }
+    throw new Error("Expected expression inside [[ ]]");
+  }
+
+  private peekTestBinaryOp(): BinaryTestOp | undefined {
+    const tok = this.peek();
+    if (!tok) return undefined;
+    if (tok.type === "op" && (tok.value === "&&" || tok.value === "||")) {
+      return tok.value;
+    }
+    if (tok.type === "word") {
+      const text = tokenPartsText(tok.parts);
+      if (TEST_BINARY_OPS.has(text)) return text as BinaryTestOp;
+    }
+    return undefined;
+  }
+
+  private consumeTestOp(op: BinaryTestOp): void {
+    const tok = this.consume();
+    if (tok.type === "op" && tok.value === op) return;
+    if (tok.type === "word" && tokenPartsText(tok.parts) === op) return;
+    throw new Error(`expected test op ${op}`);
   }
 
   private matchArithCmd(): boolean {
