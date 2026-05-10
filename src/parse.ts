@@ -1,11 +1,39 @@
-import type { ParseOptions, ParseResult } from "./ast";
+import type { ParseError, ParseOptions, ParseResult } from "./ast";
 import { Parser } from "./parser";
 import { tokenize } from "./tokenizer";
 
 export function parse(source: string, options: ParseOptions = {}): ParseResult {
+  if (options.recoverErrors) {
+    return parseRecovering(source, options);
+  }
   const tokens = tokenize(source, options);
   const parser = new Parser(tokens, options);
   const ast = parser.parseProgram();
   parser.assertEof();
   return { ast };
+}
+
+function parseRecovering(source: string, options: ParseOptions): ParseResult {
+  const errors: ParseError[] = [];
+  let tokens: ReturnType<typeof tokenize>;
+  try {
+    tokens = tokenize(source, options);
+  } catch (e) {
+    errors.push({
+      message: e instanceof Error ? e.message : String(e),
+      pos: { offset: 0, line: 1, col: 1 },
+    });
+    return {
+      ast: {
+        type: "Program",
+        body: [],
+        pos: { offset: 0, line: 1, col: 1 },
+        end: { offset: source.length, line: 1, col: 1 },
+      },
+      errors,
+    };
+  }
+  const parser = new Parser(tokens, options);
+  const result = parser.parseProgramRecovering(errors);
+  return errors.length > 0 ? { ast: result, errors } : { ast: result };
 }

@@ -17,6 +17,7 @@ import type {
   LetClause,
   ParamExp,
   ParamExpOp,
+  ParseError,
   ParseOptions,
   Pos,
   Program,
@@ -156,6 +157,44 @@ export class Parser {
       this.consume();
       yield this.wordFromToken(tok);
     }
+  }
+
+  /**
+   * Like `parseProgram` but never throws: parse errors are collected into
+   * the provided array, and the parser advances past the offending token
+   * to keep going. Used by the public `recoverErrors` mode.
+   */
+  parseProgramRecovering(errors: ParseError[]): Program {
+    const body: Statement[] = [];
+    this.skipSeparators();
+    const startPos = this.peek()?.pos ?? ZERO_POS;
+    while (!this.isEof()) {
+      const before = this.index;
+      try {
+        body.push(this.parseStatement());
+        this.skipSeparators();
+      } catch (e) {
+        const tok = this.tokens[before];
+        errors.push({
+          message: e instanceof Error ? e.message : String(e),
+          pos: tok?.pos ?? this.lastEnd() ?? startPos,
+        });
+        // Advance past the offending token to avoid infinite looping.
+        if (this.index === before) this.index += 1;
+        this.skipSeparators();
+      }
+    }
+    const endPos = this.lastEnd() ?? startPos;
+    const program: Program = {
+      type: "Program",
+      body,
+      pos: startPos,
+      end: endPos,
+    };
+    if (this.options.keepComments && this.comments.length > 0) {
+      program.comments = this.comments;
+    }
+    return program;
   }
 
   parseProgram(): Program {
