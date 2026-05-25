@@ -4,6 +4,7 @@ import type {
   ArithExp,
   BinaryArithm,
   CStyleLoop,
+  ParamExp,
   SimpleCommand,
 } from "../ast";
 import { parse } from "../parse";
@@ -35,6 +36,12 @@ const variable = (name: string) => ({
 describe("arithmetic AST in (( ))", () => {
   it("parses a literal", () => {
     expect(arithOf("(( 42 )).x").x).toMatchAst(litArith("42"));
+  });
+
+  it("accepts an empty arithmetic command", () => {
+    // mvdan/sh has file tests for empty C-style arithmetic clauses, and Bash
+    // itself accepts an empty arithmetic command.
+    expect(() => parse("(( ))")).not.toThrow();
   });
 
   it("parses a variable", () => {
@@ -147,6 +154,20 @@ describe("arithmetic AST in (( ))", () => {
     const x = arithOf("(( a , b ))").x as BinaryArithm;
     expect(x.op).toBe(",");
   });
+
+  it("spans binary arithmetic expressions from left to right operand", () => {
+    const x = arithOf("((1+2))").x as BinaryArithm;
+    expect(x.pos).toEqual({ offset: 2, line: 1, col: 3 });
+    expect(x.end).toEqual({ offset: 5, line: 1, col: 6 });
+  });
+
+  it("spans postfix arithmetic expressions from operand to operator end", () => {
+    const x = arithOf("((i++))").x;
+    if (!x) throw new Error("expected arithmetic expression");
+    expect(x.type).toBe("UnaryArithm");
+    expect(x.pos).toEqual({ offset: 2, line: 1, col: 3 });
+    expect(x.end).toEqual({ offset: 5, line: 1, col: 6 });
+  });
 });
 
 describe("arithmetic AST in $(( ))", () => {
@@ -158,9 +179,25 @@ describe("arithmetic AST in $(( ))", () => {
       y: litArith("1"),
     });
   });
+
+  it("parses special parameters in arithmetic expansions", () => {
+    const x = arithExpOf("echo $(( $? + 0 ))").x as BinaryArithm;
+    expect(x.op).toBe("+");
+    expect((x.x as ParamExp).param).toMatchAst({
+      type: "Literal",
+      value: "?",
+    });
+  });
 });
 
 describe("arithmetic in C-style for loop", () => {
+  it("accepts empty init/cond/post like mvdan/sh and Bash", () => {
+    // Inspired by mvdan/sh syntax/filetests_test.go cases for
+    // `for (( ; ; ))` and `for ((;;))`.
+    expect(() => parse("for (( ; ; )); do foo; done")).not.toThrow();
+    expect(() => parse("for ((;;)); do foo; done")).not.toThrow();
+  });
+
   it("parses init/cond/post", () => {
     const { ast } = parse("for (( i = 0; i < 10; i++ )); do :; done");
     const cmd = ast.body[0]?.command as CStyleLoop;
@@ -182,6 +219,22 @@ describe("arithmetic in C-style for loop", () => {
       op: "++",
       post: true,
       x: variable("i"),
+    });
+  });
+
+  it("anchors cond and post positions at their own C-style loop segments", () => {
+    const src = "for ((i=0;j;k++)); do :; done";
+    const { ast } = parse(src);
+    const cmd = ast.body[0]?.command as CStyleLoop;
+    expect(cmd.cond?.pos).toEqual({
+      offset: src.indexOf("j"),
+      line: 1,
+      col: 11,
+    });
+    expect(cmd.post?.pos).toEqual({
+      offset: src.indexOf("k++"),
+      line: 1,
+      col: 13,
     });
   });
 });

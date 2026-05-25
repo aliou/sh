@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "../parse";
 
+function posAt(source: string, offset: number) {
+  const before = source.slice(0, offset);
+  const lines = before.split("\n");
+  return {
+    offset,
+    line: lines.length,
+    col: (lines[lines.length - 1] ?? "").length + 1,
+  };
+}
+
 describe("recoverErrors mode", () => {
   it("returns a body and an errors array on a clean parse", () => {
     const result = parse("foo; bar", { recoverErrors: true });
@@ -22,6 +32,12 @@ describe("recoverErrors mode", () => {
     ).not.toThrow();
     const result = parse("echo 'unterminated", { recoverErrors: true });
     expect((result.errors ?? []).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("sets fallback program end to the real multiline source end", () => {
+    const source = "echo ok\nunterminated '";
+    const result = parse(source, { recoverErrors: true });
+    expect(result.ast.end).toEqual(posAt(source, source.length));
   });
 
   it("still throws by default (recoverErrors not set)", () => {

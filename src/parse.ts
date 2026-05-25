@@ -1,6 +1,7 @@
 import type { ParseError, ParseOptions, ParseResult } from "./ast";
 import { Parser } from "./parser";
 import { tokenize } from "./tokenizer";
+import { SourceMap } from "./tokenizer/cursor";
 
 export function parse(source: string, options: ParseOptions = {}): ParseResult {
   if (options.recoverErrors) {
@@ -23,12 +24,13 @@ function parseRecovering(source: string, options: ParseOptions): ParseResult {
       message: e instanceof Error ? e.message : String(e),
       pos: { offset: 0, line: 1, col: 1 },
     });
+    const map = new SourceMap(source);
     return {
       ast: {
         type: "Program",
         body: [],
         pos: { offset: 0, line: 1, col: 1 },
-        end: { offset: source.length, line: 1, col: 1 },
+        end: map.posAt(source.length),
       },
       errors,
     };

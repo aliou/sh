@@ -342,7 +342,7 @@ export type UnaryTest = Located & {
 export type ParenTest = Located & { type: "ParenTest"; x: TestExpr };
 export type TestExpr = BinaryTest | UnaryTest | ParenTest | Word;
 export type TestClause = Located & { type: "TestClause"; x: TestExpr };
-export type ArithCmd = Located & { type: "ArithCmd"; x: ArithExpr };
+export type ArithCmd = Located & { type: "ArithCmd"; x?: ArithExpr };
 export type CoprocClause = Located & {
   type: "CoprocClause";
   name?: string;

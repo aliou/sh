@@ -28,7 +28,7 @@ export function scanExpansion(
       if (source.charAt(j) === ")") depth--;
       j++;
     }
-    const expr = source.slice(pos + 3, j).trim();
+    const expr = source.slice(pos + 3, j);
     return {
       part: {
         type: "arith-exp",
@@ -77,7 +77,10 @@ export function scanExpansion(
       inner.charAt(0) === "!" &&
       /^![A-Za-z_][A-Za-z0-9_]*[*@]$/.test(inner)
     ) {
-      checkLang(options.dialect, map.posAt(pos), "${!name*}", ["bash", "zsh"]);
+      checkLang(options.dialect, map.posAt(pos), "$" + "{!name*}", [
+        "bash",
+        "zsh",
+      ]);
     }
     const part = parseBracedParam(inner, map.posAt(pos), map.posAt(j));
     return { part, end: j };

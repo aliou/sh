@@ -73,7 +73,8 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
 
       // Drain any heredocs queued since the previous newline, in order.
       while (heredocQueue.length > 0) {
-        const hd = heredocQueue.shift()!;
+        const hd = heredocQueue.shift();
+        if (!hd) break;
         const bodyStart = i;
         let body = "";
         while (i < source.length) {
@@ -178,7 +179,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       }
       tokens.push({
         type: "arith-cmd",
-        expr: source.slice(i + 2, j).trim(),
+        expr: source.slice(i + 2, j),
         innerOffset: i + 2,
         pos: map.posAt(i),
         end: map.posAt(j + 2),

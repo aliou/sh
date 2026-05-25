@@ -12,6 +12,7 @@ import {
   isHexDigit,
   isNameChar,
   isNameStart,
+  specialParams,
 } from "../tokenizer/charsets";
 import { SourceMap } from "../tokenizer/cursor";
 
@@ -134,10 +135,16 @@ function tokenizeArith(s: string): ArithTok[] {
       // `$name` in arithmetic context is folded into a ParamExp later; the
       // leading `$` is dropped here since the name token suffices.
       let j = i + 1;
-      if (j < s.length && (isNameStart(s.charAt(j)) || isDigit(s.charAt(j)))) {
+      const next = s.charAt(j);
+      if (j < s.length && isNameStart(next)) {
         while (j < s.length && isNameChar(s.charAt(j))) j++;
         toks.push({ type: "name", value: s.slice(i + 1, j), offset: i });
         i = j;
+        continue;
+      }
+      if (j < s.length && (isDigit(next) || specialParams.has(next))) {
+        toks.push({ type: "name", value: next, offset: i });
+        i += 2;
         continue;
       }
     }
@@ -276,7 +283,8 @@ function parseExpr(ctx: Ctx, minPrec: number): ArithExpr {
       op: tok.value as BinaryArithmOp,
       x: left,
       y: right,
-      ...posOf(ctx, tok.offset, tok.value.length),
+      pos: left.pos ?? posOf(ctx, tok.offset, tok.value.length).pos,
+      end: right.end ?? posOf(ctx, tok.offset, tok.value.length).end,
     };
     left = node;
   }
@@ -309,7 +317,8 @@ function parsePostfix(ctx: Ctx): ArithExpr {
       op: tok.value as UnaryArithmOp,
       post: true,
       x: expr,
-      ...posOf(ctx, tok.offset, tok.value.length),
+      pos: expr.pos ?? posOf(ctx, tok.offset, tok.value.length).pos,
+      end: posOf(ctx, tok.offset, tok.value.length).end,
     };
     return node;
   }

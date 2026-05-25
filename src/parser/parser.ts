@@ -42,6 +42,7 @@ import type {
   TokenWordPart,
 } from "../tokenizer";
 import { tokenPartsText } from "../tokenizer";
+import { SourceMap } from "../tokenizer/cursor";
 import { tokenize } from "../tokenizer/tokenize";
 import { parseArithmetic } from "./arith-parser";
 import { DECL_KEYWORDS } from "./constants";
@@ -121,9 +122,11 @@ function describeToken(token: Token | undefined): string {
   }
 }
 
-/** Split `s` on `delim`, ignoring delimiters nested inside parentheses. */
-function splitAtTopLevel(s: string, delim: string): string[] {
-  const parts: string[] = [];
+type TopLevelPart = { raw: string; offset: number };
+
+/** Split `s` on a single-char delimiter, ignoring delimiters in parentheses. */
+function splitAtTopLevel(s: string, delim: string): TopLevelPart[] {
+  const parts: TopLevelPart[] = [];
   let depth = 0;
   let start = 0;
   for (let i = 0; i < s.length; i++) {
@@ -131,12 +134,22 @@ function splitAtTopLevel(s: string, delim: string): string[] {
     if (c === "(") depth++;
     else if (c === ")") depth--;
     else if (c === delim && depth === 0) {
-      parts.push(s.slice(start, i));
+      parts.push(trimmedTopLevelPart(s, start, i));
       start = i + 1;
     }
   }
-  parts.push(s.slice(start));
+  parts.push(trimmedTopLevelPart(s, start, s.length));
   return parts;
+}
+
+function trimmedTopLevelPart(
+  source: string,
+  start: number,
+  end: number,
+): TopLevelPart {
+  while (start < end && /\s/.test(source[start] as string)) start++;
+  while (end > start && /\s/.test(source[end - 1] as string)) end--;
+  return { raw: source.slice(start, end), offset: start };
 }
 
 export class Parser {
@@ -519,12 +532,25 @@ export class Parser {
       line: token.pos.line,
       col: token.pos.col + 2,
     };
-    const [initRaw, condRaw, postRaw] = splitAtTopLevel(token.expr, ";").map(
-      (s) => s.trim(),
-    );
-    const init = initRaw ? parseArithmetic(initRaw, base) : undefined;
-    const cond = condRaw ? parseArithmetic(condRaw, base) : undefined;
-    const post = postRaw ? parseArithmetic(postRaw, base) : undefined;
+    const partMap = new SourceMap(token.expr);
+    const [initPart, condPart, postPart] = splitAtTopLevel(token.expr, ";");
+    const baseFor = (part: TopLevelPart) => {
+      const inner = partMap.posAt(part.offset);
+      return {
+        offset: base.offset + part.offset,
+        line: base.line + inner.line - 1,
+        col: inner.line === 1 ? base.col + inner.col - 1 : inner.col,
+      };
+    };
+    const init = initPart?.raw
+      ? parseArithmetic(initPart.raw, baseFor(initPart))
+      : undefined;
+    const cond = condPart?.raw
+      ? parseArithmetic(condPart.raw, baseFor(condPart))
+      : undefined;
+    const post = postPart?.raw
+      ? parseArithmetic(postPart.raw, baseFor(postPart))
+      : undefined;
 
     if (this.matchOp(";")) {
       this.consume();
@@ -807,15 +833,13 @@ export class Parser {
       line: token.pos.line,
       col: token.pos.col + 2,
     });
-    if (!x) {
-      throw new Error("Empty arithmetic command");
-    }
-    return {
+    const cmd: ArithCmd = {
       type: "ArithCmd",
-      x,
       pos: token.pos,
       end: token.end,
     };
+    if (x) cmd.x = x;
+    return cmd;
   }
 
   private parseCoprocClause(): CoprocClause {
