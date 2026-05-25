@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "../parse";
 import {
-  arithCmd,
   block,
   caseClause,
   caseItem,
@@ -14,7 +13,6 @@ import {
   simple,
   stmt,
   subshell,
-  testClause,
   timeClause,
   whileClause,
   word,
