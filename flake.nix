@@ -14,8 +14,7 @@
       {
         devShells.default = pkgs.mkShell {
           packages = [
-            pkgs.git
-            pkgs.nodejs_22
+            pkgs.nodejs
             pkgs.pnpm
           ];
         };
