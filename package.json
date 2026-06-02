@@ -1,6 +1,6 @@
 {
   "name": "@aliou/sh",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shell parser/AST for POSIX/Bash/mksh/zsh (WIP)",
   "repository": {
     "type": "git",
