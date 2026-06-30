@@ -16,6 +16,25 @@ import {
 } from "../tokenizer/charsets";
 import { SourceMap } from "../tokenizer/cursor";
 
+function arithDigitValue(c: string): number {
+  if (c >= "0" && c <= "9") return c.charCodeAt(0) - "0".charCodeAt(0);
+  if (c >= "A" && c <= "Z") return 10 + c.charCodeAt(0) - "A".charCodeAt(0);
+  if (c >= "a" && c <= "z") return 36 + c.charCodeAt(0) - "a".charCodeAt(0);
+  if (c === "@") return 62;
+  if (c === "_") return 63;
+  return -1;
+}
+
+function isArithBaseDigit(c: string, base: number): boolean {
+  const raw = arithDigitValue(c);
+  if (base <= 36) {
+    const normalized =
+      c >= "a" && c <= "z" ? 10 + c.charCodeAt(0) - "a".charCodeAt(0) : raw;
+    return normalized >= 0 && normalized < base;
+  }
+  return raw >= 0 && raw < base;
+}
+
 /**
  * Anchor describing where `source` lives in the original input, so the
  * positions we attach to nodes are absolute.
@@ -155,6 +174,20 @@ function tokenizeArith(s: string): ArithTok[] {
         while (j < s.length && isHexDigit(s.charAt(j))) j++;
       } else {
         while (j < s.length && isDigit(s.charAt(j))) j++;
+        // Bash integer base syntax: [base#]n, where base is 2..64.
+        if (s.charAt(j) === "#") {
+          const base = Number.parseInt(s.slice(i, j), 10);
+          if (base >= 2 && base <= 64) {
+            const digitsStart = j + 1;
+            let k = digitsStart;
+            while (k < s.length && isArithBaseDigit(s.charAt(k), base)) k++;
+            if (k > digitsStart) {
+              toks.push({ type: "num", value: s.slice(i, k), offset: i });
+              i = k;
+              continue;
+            }
+          }
+        }
       }
       toks.push({ type: "num", value: s.slice(i, j), offset: i });
       i = j;

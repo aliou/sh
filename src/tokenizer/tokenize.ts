@@ -19,6 +19,33 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
   // scan over all tokens.
   const heredocQueue: { strip: boolean; delimiter: string }[] = [];
 
+  // Track whether we are inside a [[ ... ]] test clause. '#' has no comment
+  // meaning inside such tests, so we suppress comment tokenization there.
+  const supportsTestClause = options.dialect !== "posix";
+  let testDepth = 0;
+
+  const isTestOpenToken = (parts: TokenWordPart[]): boolean =>
+    parts.length === 1 && parts[0]?.type === "lit" && parts[0].value === "[[";
+
+  const isTestCloseToken = (parts: TokenWordPart[]): boolean =>
+    parts.length === 1 && parts[0]?.type === "lit" && parts[0].value === "]]";
+
+  const canStartTestClause = (): boolean => {
+    const prev = tokens[tokens.length - 1];
+    if (!prev) return true;
+    if (prev.type === "op") return true;
+    if (prev.type === "symbol" && (prev.value === "(" || prev.value === "{")) {
+      return true;
+    }
+    if (
+      prev.type === "comment" ||
+      prev.type === "heredoc-body" ||
+      prev.type === "arith-cmd"
+    )
+      return true;
+    return false;
+  };
+
   // Whenever a `<<` or `<<-` redir is followed by a delimiter word, queue it
   // for the next newline.
   const queueHeredocIfPending = () => {
@@ -104,7 +131,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       continue;
     }
 
-    if (ch === "#" && atBoundary) {
+    if (ch === "#" && atBoundary && testDepth === 0) {
       const startOffset = i;
       const start = i + 1;
       i += 1;
@@ -542,12 +569,22 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       throw new Error("Unexpected character");
     }
 
+    const canStartTest = canStartTestClause();
     tokens.push({
       type: "word",
       parts,
       pos: map.posAt(wordStart),
       end: map.posAt(i),
     });
+
+    if (supportsTestClause) {
+      if (isTestOpenToken(parts) && canStartTest) {
+        testDepth++;
+      } else if (isTestCloseToken(parts) && testDepth > 0) {
+        testDepth--;
+      }
+    }
+
     queueHeredocIfPending();
     atBoundary = false;
   }

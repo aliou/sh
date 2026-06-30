@@ -10,6 +10,9 @@ export const isPosix = (d: ShellDialect | undefined): boolean => d === "posix";
 /** Is the current dialect mksh? */
 export const isMksh = (d: ShellDialect | undefined): boolean => d === "mksh";
 
+/** Is the current dialect zsh? */
+export const isZsh = (d: ShellDialect | undefined): boolean => d === "zsh";
+
 /**
  * Throw a LangError-style error if the current dialect doesn't permit
  * `feature`. Allowed dialects are listed in `allowedIn`.

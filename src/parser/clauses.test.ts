@@ -279,3 +279,34 @@ describe("parse (phase 21: coproc)", () => {
     });
   });
 });
+
+describe("empty command list validation (mvdan/sh v3.13.0)", () => {
+  it("rejects empty blocks in bash", () => {
+    expect(() => parse("{ }")).toThrow(/must be followed by a statement list/);
+    expect(() => parse("{; }")).toThrow(/must be followed by a statement list/);
+  });
+
+  it("rejects empty subshells in bash", () => {
+    expect(() => parse("( )")).toThrow(/must be followed by a statement list/);
+  });
+
+  it("rejects empty if condition or branches in bash", () => {
+    expect(() => parse("if; then bar; fi")).toThrow(
+      /must be followed by a statement list/,
+    );
+    expect(() => parse("if foo; then; fi")).toThrow(
+      /must be followed by a statement list/,
+    );
+  });
+
+  it("rejects empty while body in bash", () => {
+    expect(() => parse("while true; do; done")).toThrow(
+      /must be followed by a statement list/,
+    );
+  });
+
+  it("allows empty blocks and clauses in zsh", () => {
+    expect(() => parse("{ }", { dialect: "zsh" })).not.toThrow();
+    expect(() => parse("if; then bar; fi", { dialect: "zsh" })).not.toThrow();
+  });
+});

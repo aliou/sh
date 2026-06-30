@@ -170,6 +170,28 @@ describe("arithmetic AST in (( ))", () => {
   });
 });
 
+describe("arithmetic integer base syntax", () => {
+  it("parses base-16 literals", () => {
+    expect(arithOf("(( 16#FF ))").x).toMatchAst(litArith("16#FF"));
+  });
+
+  it("parses base-2 literals", () => {
+    expect(arithOf("(( 2#1010 ))").x).toMatchAst(litArith("2#1010"));
+  });
+
+  it("parses base-8 literals", () => {
+    expect(arithOf("(( 8#77 ))").x).toMatchAst(litArith("8#77"));
+  });
+
+  it("parses base-64 literals using @ and _", () => {
+    expect(arithOf("(( 64#@_ ))").x).toMatchAst(litArith("64#@_"));
+  });
+
+  it("allows mixed case for bases <= 36", () => {
+    expect(arithOf("(( 16#Ff ))").x).toMatchAst(litArith("16#Ff"));
+  });
+});
+
 describe("arithmetic AST in $(( ))", () => {
   it("parses a single variable expansion", () => {
     expect(arithExpOf("echo $(( i + 1 ))").x).toMatchAst({

@@ -34,7 +34,7 @@ import type {
   Word,
   WordPart,
 } from "../ast";
-import { checkLang } from "../dialect";
+import { checkLang, isZsh } from "../dialect";
 import type {
   OpTokenValue,
   SymbolTokenValue,
@@ -381,14 +381,14 @@ export class Parser {
 
   private parseSubshell(): Subshell {
     const open = this.consumeSymbol("(");
-    const body = this.parseStatementList(")");
+    const body = this.parseStatementList("(", ")");
     const close = this.consumeSymbol(")");
     return { type: "Subshell", body, pos: open.pos, end: close.end };
   }
 
   private parseBlock(): Block {
     const open = this.consumeSymbol("{");
-    const body = this.parseStatementList("}");
+    const body = this.parseStatementList("{", "}");
     const close = this.consumeSymbol("}");
     return { type: "Block", body, pos: open.pos, end: close.end };
   }
@@ -409,7 +409,10 @@ export class Parser {
     return items.length > 0 ? items : undefined;
   }
 
-  private parseStatementList(endSymbol: SymbolTokenValue): Statement[] {
+  private parseStatementList(
+    left: string,
+    endSymbol: SymbolTokenValue,
+  ): Statement[] {
     const body: Statement[] = [];
     this.skipSeparators();
     while (!this.matchSymbol(endSymbol)) {
@@ -421,6 +424,9 @@ export class Parser {
       body.push(this.parseStatement());
       this.skipSeparators();
     }
+    if (body.length === 0 && !isZsh(this.options.dialect)) {
+      throw new Error(`"${left}" must be followed by a statement list`);
+    }
     return body;
   }
 
@@ -431,16 +437,20 @@ export class Parser {
    */
   private parseIfChain(head: "if" | "elif"): IfClause {
     const headTok = this.consumeKeyword(head);
-    const cond = this.parseStatementsUntilKeyword(["then"]);
+    const cond = this.parseStatementsUntilKeyword(head, ["then"]);
     this.consumeKeyword("then");
-    const thenBranch = this.parseStatementsUntilKeyword(["else", "elif", "fi"]);
+    const thenBranch = this.parseStatementsUntilKeyword("then", [
+      "else",
+      "elif",
+      "fi",
+    ]);
     let elseBranch: Statement[] | undefined;
     if (this.matchKeyword("elif")) {
       const inner = this.parseIfChain("elif");
       elseBranch = [this.wrapStatement(inner)];
     } else if (this.matchKeyword("else")) {
       this.consumeKeyword("else");
-      elseBranch = this.parseStatementsUntilKeyword(["fi"]);
+      elseBranch = this.parseStatementsUntilKeyword("else", ["fi"]);
     }
     // Only the outermost `if` consumes `fi`; recursive `elif` rides on the
     // outer call's eventual consumption.
@@ -466,9 +476,10 @@ export class Parser {
 
   private parseWhileClause(until: boolean): WhileClause {
     const head = this.consumeKeyword(until ? "until" : "while");
-    const cond = this.parseStatementsUntilKeyword(["do"]);
+    const keyword = until ? "until" : "while";
+    const cond = this.parseStatementsUntilKeyword(keyword, ["do"]);
     this.consumeKeyword("do");
-    const body = this.parseStatementsUntilKeyword(["done"]);
+    const body = this.parseStatementsUntilKeyword("do", ["done"]);
     const done = this.consumeKeyword("done");
     return until
       ? {
@@ -507,7 +518,7 @@ export class Parser {
     }
     this.skipSeparators();
     this.consumeKeyword("do");
-    const body = this.parseStatementsUntilKeyword(["done"]);
+    const body = this.parseStatementsUntilKeyword("do", ["done"]);
     const done = this.consumeKeyword("done");
     return items
       ? { type: "ForClause", name, items, body, pos: forTok.pos, end: done.end }
@@ -557,7 +568,7 @@ export class Parser {
     }
     this.skipSeparators();
     this.consumeKeyword("do");
-    const body = this.parseStatementsUntilKeyword(["done"]);
+    const body = this.parseStatementsUntilKeyword("do", ["done"]);
     const done = this.consumeKeyword("done");
     const loop: CStyleLoop = {
       type: "CStyleLoop",
@@ -603,7 +614,7 @@ export class Parser {
     }
     this.skipSeparators();
     this.consumeKeyword("do");
-    const body = this.parseStatementsUntilKeyword(["done"]);
+    const body = this.parseStatementsUntilKeyword("do", ["done"]);
     const done = this.consumeKeyword("done");
     return items
       ? {
@@ -890,7 +901,10 @@ export class Parser {
     return this.matchOp(";") && this.peekOp(";");
   }
 
-  private parseStatementsUntilKeyword(endKeywords: string[]): Statement[] {
+  private parseStatementsUntilKeyword(
+    left: string,
+    endKeywords: string[],
+  ): Statement[] {
     const body: Statement[] = [];
     this.skipSeparators();
     while (!this.matchKeywordIn(endKeywords)) {
@@ -901,6 +915,9 @@ export class Parser {
       }
       body.push(this.parseStatement());
       this.skipSeparators();
+    }
+    if (body.length === 0 && !isZsh(this.options.dialect)) {
+      throw new Error(`"${left}" must be followed by a statement list`);
     }
     return body;
   }

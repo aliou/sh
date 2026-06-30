@@ -121,6 +121,21 @@ describe("parse (phase 22: decl clause)", () => {
       ),
     });
   });
+
+  it("allows brace patterns in declaration variable names", () => {
+    // mvdan/sh v3.13.0: declarations like `local {a,b}_c=1` should parse
+    // rather than erroring on an invalid variable name. The braced name is
+    // kept as an argument word so it can be expanded later.
+    expect(parse("declare {a,b}_c=value")).toMatchAst({
+      ast: program(
+        stmt(
+          declClause("declare", {
+            args: [word("{a,b}_c=value")],
+          }),
+        ),
+      ),
+    });
+  });
 });
 
 describe("parse (phase 23: append assignment)", () => {

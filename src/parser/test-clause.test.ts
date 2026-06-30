@@ -119,4 +119,31 @@ describe("TestClause structured AST", () => {
       y: litWord("b"),
     });
   });
+
+  it("treats '#' as a literal inside [[ ]], not a comment", () => {
+    expect(testOf("[[ a == #b ]]").x).toMatchAst({
+      type: "BinaryTest",
+      op: "==",
+      x: litWord("a"),
+      y: litWord("#b"),
+    });
+  });
+
+  it("treats '#' as a word continuation inside [[ ]]", () => {
+    expect(testOf("[[ -n $foo#bar ]]").x).toMatchAst({
+      type: "UnaryTest",
+      op: "-n",
+      x: {
+        type: "Word",
+        parts: [
+          {
+            type: "ParamExp",
+            short: true,
+            param: { type: "Literal", value: "foo" },
+          },
+          { type: "Literal", value: "#bar" },
+        ],
+      },
+    });
+  });
 });
