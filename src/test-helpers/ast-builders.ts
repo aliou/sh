@@ -37,6 +37,7 @@ import {
 
 /** Sentinel positions for hand-built nodes; `toMatchAst` strips them. */
 const P = { pos: NO_POS, end: NO_POS };
+type ParamOp = NonNullable<ParamExp["exp"]>["op"];
 
 export const lit = (value: string): Literal => ({
   type: "Literal",
@@ -66,7 +67,6 @@ export const paramExp = (
     ...P,
   };
   if (op !== undefined) {
-    type ParamOp = NonNullable<ParamExp["exp"]>["op"];
     p.exp = { op: op as ParamOp };
     if (value !== undefined) {
       p.exp.word = { type: "Word", parts: [lit(value)], ...P };

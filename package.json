@@ -46,6 +46,7 @@
     ]
   },
   "devDependencies": {
+    "@aliou/biome-plugins": "0.12.0",
     "@biomejs/biome": "^2.5.5",
     "@changesets/cli": "^2.29.8",
     "@types/node": "^24.0.0",
