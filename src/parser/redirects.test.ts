@@ -66,6 +66,21 @@ describe("parse (phase 3: assignments and redirects)", () => {
       ),
     });
   });
+
+  it.each([
+    "bash",
+    "zsh",
+  ] as const)("parses named file descriptor redirects in %s", (dialect) => {
+    expect(parse("foo {fd}<f", { dialect })).toMatchAst({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [word("foo")],
+          redirects: [redirect("<", "f", "{fd}")],
+        }),
+      ),
+    });
+  });
 });
 
 describe("parse (phase 12: extended redirects)", () => {

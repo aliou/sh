@@ -1,6 +1,13 @@
 import type { ParseOptions } from "../ast";
 import { checkLang } from "../dialect";
-import { isDigit, operatorChars, redirChars, symbolChars } from "./charsets";
+import {
+  isDigit,
+  isNameChar,
+  isNameStart,
+  operatorChars,
+  redirChars,
+  symbolChars,
+} from "./charsets";
 import { SourceMap } from "./cursor";
 import { scanBacktick } from "./scan-backtick";
 import { scanExpansion } from "./scan-expansion";
@@ -171,6 +178,32 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
         atBoundary = true;
         i += 1;
         continue;
+      }
+    }
+
+    if (ch === "{" && atBoundary && isNameStart(source.charAt(i + 1))) {
+      let j = i + 2;
+      while (j < source.length && isNameChar(source.charAt(j))) {
+        j += 1;
+      }
+      if (source.charAt(j) === "}") {
+        const redir = tryRedirOp(source, j + 1);
+        if (redir) {
+          checkLang(options.dialect, map.posAt(i), "`{varname}` redirects", [
+            "bash",
+            "zsh",
+          ]);
+          tokens.push({
+            type: "redir",
+            op: redir.op,
+            fd: source.slice(i, j + 1),
+            pos: map.posAt(i),
+            end: map.posAt(j + 1 + redir.len),
+          });
+          i = j + 1 + redir.len;
+          atBoundary = true;
+          continue;
+        }
       }
     }
 

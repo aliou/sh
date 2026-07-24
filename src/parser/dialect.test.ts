@@ -49,6 +49,10 @@ describe("dialect enforcement: POSIX", () => {
     expectErr("foo <<< bar", "posix", /<<</);
   });
 
+  it("rejects named file descriptor redirects", () => {
+    expectErr("foo {fd}<f", "posix", /\{varname\}.*bash\/zsh feature/);
+  });
+
   it("rejects process substitution", () => {
     expectErr("diff <(foo) <(bar)", "posix", /process subst/);
   });
@@ -97,6 +101,10 @@ describe("dialect enforcement: mksh", () => {
 
   it("rejects ${!foo@}", () => {
     expectErr("echo ${!foo@}", "mksh", /\$\{!/);
+  });
+
+  it("rejects named file descriptor redirects", () => {
+    expectErr("foo {fd}<f", "mksh", /\{varname\}.*bash\/zsh feature/);
   });
 });
 
