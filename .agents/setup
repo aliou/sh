@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 local_bin="$HOME/.local/bin"
 node_root="$HOME/.local/share/nodejs"
-pnpm_version="10.26.1"
+pnpm_version="11.17.0"
 
 mkdir -p "$local_bin" "$node_root"
 export PATH="$local_bin:$PATH"
@@ -71,6 +71,6 @@ fi
 
 echo "Installing project dependencies..."
 cd "$repo_root"
-HUSKY=0 pnpm install --frozen-lockfile
+CI=true HUSKY=0 pnpm install --frozen-lockfile
 
 echo "Orb setup complete: Node.js $(node --version), pnpm $(pnpm --version)"

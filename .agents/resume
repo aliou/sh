@@ -9,8 +9,8 @@ if [[ "$(node --version)" != v24.* ]]; then
 	exit 1
 fi
 
-if [[ "$(pnpm --version)" != "10.26.1" ]]; then
-	echo "pnpm 10.26.1 is unavailable; rerun .agents/setup" >&2
+if [[ "$(pnpm --version)" != "11.17.0" ]]; then
+	echo "pnpm 11.17.0 is unavailable; rerun .agents/setup" >&2
 	exit 1
 fi
 
