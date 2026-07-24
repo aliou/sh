@@ -270,7 +270,7 @@ function parseExpr(ctx: Ctx, minPrec: number): ArithExpr {
   let left = parseUnary(ctx);
   while (true) {
     const tok = peek(ctx);
-    if (!tok || tok.type !== "op") break;
+    if (tok?.type !== "op") break;
     const info = BIN_INFO[tok.value];
     if (!info || info.prec < minPrec) break;
 
@@ -347,7 +347,7 @@ function parsePrimary(ctx: Ctx): ArithExpr {
   if (tok.type === "lparen") {
     const inner = parseExpr(ctx, 0);
     const next = advance(ctx);
-    if (!next || next.type !== "rparen") {
+    if (next?.type !== "rparen") {
       throw new Error("Expected closing paren in arithmetic");
     }
     return {

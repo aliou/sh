@@ -940,7 +940,7 @@ export class Parser {
 
       if (this.matchWord()) {
         const token = this.peek();
-        if (!token || token.type !== "word") break;
+        if (token?.type !== "word") break;
 
         const assignment = this.tryParseAssignment(token);
         if (assignment) {
@@ -1015,7 +1015,7 @@ export class Parser {
     while (true) {
       if (this.matchWord()) {
         const token = this.peek();
-        if (!token || token.type !== "word") {
+        if (token?.type !== "word") {
           throw new Error("Expected word token");
         }
 
@@ -1266,7 +1266,7 @@ export class Parser {
     const parts = token.parts;
     if (parts.length !== 1) return undefined;
     const part = parts[0];
-    if (!part || part.type !== "lit") return undefined;
+    if (part?.type !== "lit") return undefined;
     const raw = part.value;
 
     let append = false;
