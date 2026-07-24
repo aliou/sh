@@ -31,15 +31,14 @@ describe("parse (phase 22: decl clause)", () => {
       variant: "nameref" as const,
       assigns: [assign("ref", "target")],
     },
-  ])("parses $variant with assignment", ({
-    input,
-    variant,
-    assigns: assignList,
-  }) => {
-    expect(parse(input)).toMatchAst({
-      ast: program(stmt(declClause(variant, { assigns: assignList }))),
-    });
-  });
+  ])(
+    "parses $variant with assignment",
+    ({ input, variant, assigns: assignList }) => {
+      expect(parse(input)).toMatchAst({
+        ast: program(stmt(declClause(variant, { assigns: assignList }))),
+      });
+    },
+  );
 
   it("parses export with multiple names", () => {
     expect(parse("export FOO BAR")).toMatchAst({
@@ -62,23 +61,21 @@ describe("parse (phase 22: decl clause)", () => {
       flag: "-i",
       assignVal: assign("count", "0"),
     },
-  ])("parses $variant with flag and assignment", ({
-    input,
-    variant,
-    flag,
-    assignVal,
-  }) => {
-    expect(parse(input)).toMatchAst({
-      ast: program(
-        stmt(
-          declClause(variant, {
-            args: [word(flag)],
-            assigns: [assignVal],
-          }),
+  ])(
+    "parses $variant with flag and assignment",
+    ({ input, variant, flag, assignVal }) => {
+      expect(parse(input)).toMatchAst({
+        ast: program(
+          stmt(
+            declClause(variant, {
+              args: [word(flag)],
+              assigns: [assignVal],
+            }),
+          ),
         ),
-      ),
-    });
-  });
+      });
+    },
+  );
 
   it("parses readonly with names", () => {
     expect(parse("readonly X Y")).toMatchAst({
