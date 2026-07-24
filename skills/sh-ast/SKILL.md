@@ -34,6 +34,7 @@ const { ast } = parse('echo "hello $USER" | grep hello');
 | `IfClause` | `if cond; then ... fi` |
 | `WhileClause` | `while cond; do ... done` |
 | `ForClause` | `for x in a b c; do ... done` |
+| `SelectClause` | `select x in a b c; do ... done` |
 | `CStyleLoop` | `for ((i=0; i<10; i++)); do ... done` |
 | `CaseClause` | `case x in a) ... esac` |
 | `FunctionDecl` | `foo() { ... }` |
@@ -41,6 +42,8 @@ const { ast } = parse('echo "hello $USER" | grep hello');
 | `Block` | `{ ... }` |
 | `TestClause` | `[[ ... ]]` |
 | `ArithCmd` | `(( ... ))` |
+| `CoprocClause` | `coproc name { ... }` |
+| `TimeClause` | `time cmd` |
 | `DeclClause` | `declare`, `local`, `export` |
 | `LetClause` | `let x=1` |
 
@@ -57,6 +60,11 @@ Words in commands contain typed parts:
 | `CmdSubst` | `$(date)`, `` `date` `` |
 | `ArithExp` | `$((1 + 2))` |
 | `ProcSubst` | `<(cmd)`, `>(cmd)` |
+| `ExtGlob` | `@(foo\|bar)`, `!(tmp)` |
+| `BraceExp` | `{a,b}`, `{1..5}` after `splitBraces` |
+
+Every parsed AST node has `pos` and `end` source positions. Offsets are
+zero-indexed bytes; lines and columns are one-indexed.
 
 ## Examples
 
@@ -248,9 +256,48 @@ countNodes(ast); // Approximate complexity
 interface ParseOptions {
   dialect?: "posix" | "bash" | "mksh" | "zsh"; // default: "bash"
   keepComments?: boolean; // default: false
+  recoverErrors?: boolean; // default: false
 }
 
 const { ast } = parse(script, { dialect: "posix" });
+```
+
+With `recoverErrors: true`, `parse` returns any non-fatal errors instead of
+throwing, allowing analysis of the successfully parsed statements:
+
+```typescript
+const { ast, errors } = parse(script, { recoverErrors: true });
+```
+
+## Additional APIs
+
+### Parse lazily
+
+Use `parseStmtsSeq` for top-level statements or `parseWordsSeq` for an
+argv-style sequence of words. Both return generators and accept the same
+parser options as `parse`.
+
+```typescript
+import { parseStmtsSeq, parseWordsSeq } from "@aliou/sh";
+
+for (const statement of parseStmtsSeq("build; test; deploy")) {
+  // Analyze each statement as it is parsed.
+}
+
+const words = [...parseWordsSeq("deploy --env 'staging west'")];
+```
+
+### Split brace expansions
+
+Brace expansion is opt-in. Call `splitBraces` on a parsed `Word`; it mutates
+the word, replacing valid brace syntax with `BraceExp` parts, and returns
+whether the word contained a brace candidate.
+
+```typescript
+import { parseWordsSeq, splitBraces } from "@aliou/sh";
+
+const [word] = parseWordsSeq("src/{client,server}.ts");
+if (word) splitBraces(word);
 ```
 
 ## Common Patterns
@@ -283,6 +330,8 @@ function isSimpleCommand(node: unknown): node is { type: "SimpleCommand" } {
 
 ## Limitations
 
-- Position tracking not yet in AST nodes
-- Extended globbing not parsed
-- Arithmetic expressions are stored as raw strings
+- The parser is still a work in progress and does not cover every POSIX or
+  Bash grammar edge case.
+- Extended glob patterns are represented by an `ExtGlob` node whose inner
+  pattern is stored as a raw string.
+- Brace expansion is not performed by `parse`; use `splitBraces` explicitly.
