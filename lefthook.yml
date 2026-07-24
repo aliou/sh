@@ -1,0 +1,13 @@
+pre-commit:
+  commands:
+    check:
+      glob: "*.{ts,tsx,js,jsx,mjs,cjs,json}"
+      run: pnpm biome format {staged_files}
+      stage_fixed_files: true
+    typecheck:
+      run: pnpm typecheck
+
+pre-push:
+  commands:
+    test:
+      run: pnpm test

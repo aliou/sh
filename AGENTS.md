@@ -9,12 +9,13 @@ Goal: TypeScript reimplementation of a shell parser/AST (mvdan/sh-style), target
 
 ## Common commands
 - Install: `pnpm install`
-- Format+lint: `pnpm check`
+- Lint: `pnpm lint`
+- Format: `pnpm format`
 - Typecheck: `pnpm typecheck`
 - Tests: `pnpm test`
 - Build: `pnpm build`
 
-## Git hooks (husky)
+## Git hooks (lefthook)
 - pre-commit: staged formatting/linting + typecheck
 - pre-push: tests
 

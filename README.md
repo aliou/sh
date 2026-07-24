@@ -95,7 +95,8 @@ nix develop
 pnpm install     # install deps
 pnpm test        # run tests (vitest)
 pnpm typecheck   # tsc --noEmit
-pnpm check       # biome format + lint
+pnpm lint        # biome lint
+pnpm format      # biome format
 pnpm build       # rolldown + tsc declarations
 ```
 

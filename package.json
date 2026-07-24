@@ -26,10 +26,8 @@
     "skills"
   ],
   "scripts": {
-    "check": "biome check .",
-    "format": "biome format --write .",
-    "lint": "biome lint .",
-    "lint-staged": "lint-staged",
+    "format": "biome check --write",
+    "lint": "biome check",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -37,21 +35,14 @@
     "build:types": "tsc -p tsconfig.build.json",
     "build": "pnpm build:js && pnpm build:types",
     "changeset": "changeset",
-    "prepack": "pnpm build",
-    "prepare": "husky install"
-  },
-  "lint-staged": {
-    "*.{ts,tsx,js,jsx,mjs,cjs,json}": [
-      "biome check --write"
-    ]
+    "prepack": "pnpm build"
   },
   "devDependencies": {
     "@aliou/biome-plugins": "0.12.0",
     "@biomejs/biome": "^2.5.5",
     "@changesets/cli": "^2.29.8",
     "@types/node": "^24.0.0",
-    "husky": "^9.1.7",
-    "lint-staged": "^16.2.0",
+    "lefthook": "^1.11.0",
     "rolldown": "^1.0.0-rc.1",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0"
