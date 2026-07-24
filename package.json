@@ -13,7 +13,7 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "exports": {
     ".": {
@@ -56,5 +56,5 @@
     "typescript": "^5.8.0",
     "vitest": "^3.2.0"
   },
-  "packageManager": "pnpm@10.26.1"
+  "packageManager": "pnpm@11.17.0"
 }
