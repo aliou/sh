@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+local_bin="$HOME/.local/bin"
+node_root="$HOME/.local/share/nodejs"
+pnpm_version="10.26.1"
+
+mkdir -p "$local_bin" "$node_root"
+export PATH="$local_bin:$PATH"
+
+profile_marker="# aliou-sh orb toolchain"
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+	cat >>"$HOME/.bash_profile" <<'EOF'
+
+# aliou-sh orb toolchain
+case ":$PATH:" in
+	*":$HOME/.local/bin:"*) ;;
+	*) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+EOF
+fi
+
+if ! command -v node >/dev/null || [[ "$(node --version)" != v24.* ]]; then
+	echo "Installing Node.js 24..."
+	architecture="$(dpkg --print-architecture)"
+	case "$architecture" in
+		amd64) node_arch="x64" ;;
+		arm64) node_arch="arm64" ;;
+		*) echo "Unsupported architecture: $architecture" >&2; exit 1 ;;
+	esac
+
+	node_index="$(curl --fail --silent --show-error https://nodejs.org/dist/index.tab)"
+	node_version="$(awk -F '\t' '$1 ~ /^v24\./ { print $1; exit }' <<<"$node_index")"
+	if [[ -z "$node_version" ]]; then
+		echo "Could not determine the latest Node.js 24 release" >&2
+		exit 1
+	fi
+
+	archive="node-${node_version}-linux-${node_arch}.tar.xz"
+	version_dir="$node_root/$node_version"
+	if [[ ! -x "$version_dir/bin/node" ]]; then
+		tmp_dir="$(mktemp -d)"
+		trap 'rm -rf "$tmp_dir"' EXIT
+		curl --fail --silent --show-error --location \
+			"https://nodejs.org/dist/${node_version}/${archive}" -o "$tmp_dir/$archive"
+		curl --fail --silent --show-error --location \
+			"https://nodejs.org/dist/${node_version}/SHASUMS256.txt" -o "$tmp_dir/SHASUMS256.txt"
+		(
+			cd "$tmp_dir"
+			grep "  $archive\$" SHASUMS256.txt | sha256sum --check --status
+		)
+		mkdir -p "$version_dir"
+		tar -xJf "$tmp_dir/$archive" --strip-components=1 -C "$version_dir"
+		rm -rf "$tmp_dir"
+		trap - EXIT
+	fi
+
+	for executable in node npm npx corepack; do
+		if [[ -e "$version_dir/bin/$executable" ]]; then
+			ln -sfn "$version_dir/bin/$executable" "$local_bin/$executable"
+		fi
+	done
+	hash -r
+fi
+
+if [[ "$(command -v pnpm 2>/dev/null || true)" != "$local_bin/pnpm" ]] || [[ "$(pnpm --version 2>/dev/null || true)" != "$pnpm_version" ]]; then
+	echo "Installing pnpm $pnpm_version..."
+	npm install --global --prefix "$HOME/.local" "pnpm@$pnpm_version"
+fi
+
+echo "Installing project dependencies..."
+cd "$repo_root"
+HUSKY=0 pnpm install --frozen-lockfile
+
+echo "Orb setup complete: Node.js $(node --version), pnpm $(pnpm --version)"
