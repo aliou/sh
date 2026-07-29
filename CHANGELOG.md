@@ -1,5 +1,11 @@
 # @aliou/sh
 
+## 0.2.2
+
+### Patch Changes
+
+- 63b3cc5: Fix top-level word scanning for escaped characters.
+
 ## 0.2.1
 
 ### Patch Changes
