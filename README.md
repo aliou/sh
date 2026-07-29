@@ -69,7 +69,7 @@ extractCommandNames(ast); // ["grep", "head"]
 - Command substitution (`$(cmd)`, `` `cmd` ``), arithmetic expansion (`$((expr))`)
 - Process substitution (`<(cmd)`, `>(cmd)`)
 - Heredocs (`<<`, `<<-`), herestrings (`<<<`)
-- All redirect operators (`>`, `>>`, `<`, `>&`, `<&`, `<>`, `>|`, `&>`, `&>>`)
+- All redirect operators (`>`, `>>`, `<`, `>&`, `<&`, `<>`, `>|`, `&>`, `&>>`), including `{varname}` file-descriptor redirects (`foo {fd}<file`, Bash/Zsh only)
 - Assignments (`FOO=bar cmd`), append assignments (`FOO+=bar`)
 - Array expressions (`arr=(a b c)`, `arr=([0]=x [1]=y)`)
 - Declaration builtins as special forms (`declare`, `local`, `export`, `readonly`, `typeset`, `nameref`)
