@@ -3,7 +3,8 @@ name: sh-ast
 description: |
   Parse and analyze shell commands using @aliou/sh. Use when working with shell
   scripts programmatically: extracting commands, analyzing pipelines, finding
-  variables, checking for unsafe patterns, or transforming shell code.
+  variables, checking for unsafe patterns, transforming shell code, or traversing
+  the AST.
 ---
 
 # @aliou/sh - Shell Parser
@@ -34,6 +35,7 @@ const { ast } = parse('echo "hello $USER" | grep hello');
 | `IfClause` | `if cond; then ... fi` |
 | `WhileClause` | `while cond; do ... done` |
 | `ForClause` | `for x in a b c; do ... done` |
+| `SelectClause` | `select x in a b c; do ... done` |
 | `CStyleLoop` | `for ((i=0; i<10; i++)); do ... done` |
 | `CaseClause` | `case x in a) ... esac` |
 | `FunctionDecl` | `foo() { ... }` |
@@ -41,6 +43,8 @@ const { ast } = parse('echo "hello $USER" | grep hello');
 | `Block` | `{ ... }` |
 | `TestClause` | `[[ ... ]]` |
 | `ArithCmd` | `(( ... ))` |
+| `CoprocClause` | `coproc name { ... }` |
+| `TimeClause` | `time cmd` |
 | `DeclClause` | `declare`, `local`, `export` |
 | `LetClause` | `let x=1` |
 
@@ -57,6 +61,43 @@ Words in commands contain typed parts:
 | `CmdSubst` | `$(date)`, `` `date` `` |
 | `ArithExp` | `$((1 + 2))` |
 | `ProcSubst` | `<(cmd)`, `>(cmd)` |
+| `BraceExp` | `{a,b}`, `{1..5}` (via `splitBraces`) |
+| `ExtGlob` | `@(foo)`, `*(bar)` (Bash/mksh) |
+
+### Positions
+
+Every AST node has `pos` and `end` of type `Pos`:
+
+```typescript
+import type { Pos } from "@aliou/sh";
+
+interface Pos {
+  offset: number; // 0-indexed bytes
+  line: number;   // 1-indexed
+  col: number;    // 1-indexed
+}
+```
+
+Use `NO_POS` as a sentinel when building nodes outside the parser.
+
+## Parser Options
+
+```typescript
+interface ParseOptions {
+  dialect?: "posix" | "bash" | "mksh" | "zsh"; // default: "bash"
+  keepComments?: boolean; // default: false
+  recoverErrors?: boolean; // default: false
+}
+```
+
+Use `recoverErrors: true` to get a partial AST plus an `errors` array instead of throwing.
+
+## Other Exports
+
+- `parseStmtsSeq(source, options?)` -- yield each top-level statement lazily
+- `parseWordsSeq(source, options?)` -- yield each word lazily
+- `splitBraces(word)` -- expand `{a,b}` / `{1..5}` brace expansion in place
+- `NO_POS` -- sentinel position
 
 ## Examples
 
@@ -242,15 +283,16 @@ const { ast } = parse("if true; then echo hi; fi");
 countNodes(ast); // Approximate complexity
 ```
 
-## Parser Options
+### Expand Brace Expansion
 
 ```typescript
-interface ParseOptions {
-  dialect?: "posix" | "bash" | "mksh" | "zsh"; // default: "bash"
-  keepComments?: boolean; // default: false
-}
+import { parse, splitBraces, type Word } from "@aliou/sh";
 
-const { ast } = parse(script, { dialect: "posix" });
+const { ast } = parse("echo {a,b,c}.txt");
+const word = ast.body[0].command as { words?: Word[] };
+const target = word.words?.[1];
+if (target) splitBraces(target);
+// target.parts now contains a BraceExp node with three elements
 ```
 
 ## Common Patterns
@@ -283,6 +325,6 @@ function isSimpleCommand(node: unknown): node is { type: "SimpleCommand" } {
 
 ## Limitations
 
-- Position tracking not yet in AST nodes
-- Extended globbing not parsed
-- Arithmetic expressions are stored as raw strings
+- Not a complete POSIX/Bash parser; some edge cases may differ from mvdan/sh.
+- `ExtGlob` keeps its inner pattern as a raw string.
+- `parse` does not perform brace expansion; call `splitBraces` explicitly.
