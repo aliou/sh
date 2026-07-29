@@ -257,6 +257,17 @@ extractRedirects(cmd);
 // [{ op: ">", target: "file.txt" }, { op: ">&", fd: "2", target: "1" }]
 ```
 
+`fd` is either a numeric string (`"2"`) or, in Bash/Zsh, a `{varname}` redirect such as `"{fd}"`:
+
+```typescript
+const { ast } = parse("foo {fd}<file");
+const cmd = ast.body[0].command as SimpleCommand;
+extractRedirects(cmd);
+// [{ op: "<", fd: "{fd}", target: "file" }]
+```
+
+`{varname}` redirects are rejected in POSIX and mksh dialects.
+
 ### Count AST Nodes (complexity metric)
 
 ```typescript
