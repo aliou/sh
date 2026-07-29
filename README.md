@@ -1,8 +1,8 @@
 # @aliou/sh
 
-TypeScript shell parser inspired by [mvdan/sh](https://github.com/mvdan/sh). Parses POSIX/Bash shell commands into a typed AST.
+TypeScript shell parser inspired by [mvdan/sh](https://github.com/mvdan/sh). Parses POSIX/Bash/mksh/zsh shell commands into a typed AST.
 
-Zero dependencies. Single exported function. ~28 KB bundled.
+Zero runtime dependencies. ~66 KB bundled.
 
 ## Usage
 
@@ -24,7 +24,9 @@ The parser returns a `Program` node containing `Statement` nodes. Each statement
 - `DeclClause` (`declare`, `local`, `export`, `readonly`, `typeset`, `nameref`)
 - `LetClause` (`let`), `CStyleLoop` (`for (( ; ; ))`)
 
-Words contain typed parts: `Literal`, `SglQuoted`, `DblQuoted`, `ParamExp`, `CmdSubst`, `ArithExp`, `ProcSubst`.
+Words contain typed parts: `Literal`, `SglQuoted`, `DblQuoted`, `ParamExp`, `CmdSubst`, `ArithExp`, `ProcSubst`, `BraceExp`, `ExtGlob`.
+
+All AST nodes carry source positions via `pos` and `end` (`Pos`: `offset`, `line`, `col`).
 
 ### Example: extract command names
 
@@ -77,17 +79,39 @@ extractCommandNames(ast); // ["grep", "head"]
 - Subshells `()`, blocks `{}`
 - `[[ ]]` test expressions, `(( ))` arithmetic commands
 - `coproc`, `time`, negation (`!`)
+- Extended globs (`@(foo)`, `*(bar)`) in Bash/mksh mode
 - Comments (optionally preserved via `keepComments` option), backslash line continuations, background (`&`), semicolons
+
+Brace expansion (`{a,b}`, `{1..5}`) is available via the `splitBraces` helper; the parser does not emit it by default.
+
+## Parser options
+
+```typescript
+interface ParseOptions {
+  dialect?: "posix" | "bash" | "mksh" | "zsh"; // default: "bash"
+  keepComments?: boolean; // default: false
+  recoverErrors?: boolean; // default: false
+}
+```
+
+Use `recoverErrors: true` to get a partial AST and a list of non-fatal parse errors instead of throwing.
+
+## Other exports
+
+- `parseStmtsSeq(source, options?)` -- lazy generator yielding top-level statements
+- `parseWordsSeq(source, options?)` -- lazy generator yielding words
+- `splitBraces(word)` -- expand `{a,b}` / `{1..5}` brace expansion in a word
+- `NO_POS` -- sentinel position for nodes built outside the parser
 
 ## Install
 
 ```bash
-pnpm add github:aliou/sh
+npm install @aliou/sh
 ```
 
 ## Development
 
-Requires [Nix](https://nixos.org/) (provides Node 22 and pnpm):
+Requires [Nix](https://nixos.org/) (provides Node 24 and pnpm):
 
 ```bash
 nix develop
@@ -95,18 +119,18 @@ nix develop
 pnpm install     # install deps
 pnpm test        # run tests (vitest)
 pnpm typecheck   # tsc --noEmit
-pnpm lint        # biome lint
-pnpm format      # biome format
+pnpm lint        # biome check
+pnpm format      # biome check --write
 pnpm build       # rolldown + tsc declarations
 ```
 
-Git hooks (via husky):
+Git hooks (via lefthook):
 - **pre-commit**: staged file formatting/linting + typecheck
 - **pre-push**: tests
 
 ## Status
 
-Work in progress. Covers the Bash subset needed for AST-based command analysis (command classification, variable mutation tracking, guardrail enforcement). Not yet a complete POSIX/Bash parser -- notably missing: position tracking in AST nodes, extended globbing, and full arithmetic expression parsing.
+Work in progress. Covers the Bash subset needed for AST-based command analysis (command classification, variable mutation tracking, guardrail enforcement). Not a complete POSIX/Bash parser.
 
 ## License
 
