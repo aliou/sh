@@ -54,4 +54,49 @@ describe("parse (phase 2: words, quotes, comments)", () => {
       ast: program(stmt(simple("foo", "bar"))),
     });
   });
+  it("treats backslash-CRLF as whitespace", () => {
+    expect(parse("foo \\\r\n bar")).toMatchAst({
+      ast: program(stmt(simple("foo", "bar"))),
+    });
+  });
+
+  it("keeps escaped parentheses as literal words", () => {
+    expect(parse('find . \\( -name "*.cs" \\)')).toMatchAst({
+      ast: program(
+        stmt({
+          type: "SimpleCommand",
+          words: [
+            wordParts(lit("find")),
+            wordParts(lit(".")),
+            wordParts(lit("(")),
+            wordParts(lit("-name")),
+            wordParts(dbl(lit("*.cs"))),
+            wordParts(lit(")")),
+          ],
+        }),
+      ),
+    });
+  });
+
+  it("keeps escaped spaces inside the same word", () => {
+    expect(parse("echo a\\ b")).toMatchAst({
+      ast: program(stmt(simple("echo", "a b"))),
+    });
+  });
+
+  it("keeps escaped operators inside literal words", () => {
+    expect(parse("echo foo\\;bar")).toMatchAst({
+      ast: program(stmt(simple("echo", "foo;bar"))),
+    });
+
+    expect(parse("echo a\\|b")).toMatchAst({
+      ast: program(stmt(simple("echo", "a|b"))),
+    });
+  });
+
+  it("keeps a trailing backslash literal", () => {
+    expect(parse("echo foo\\")).toMatchAst({
+      ast: program(stmt(simple("echo", "foo\\"))),
+    });
+  });
 });

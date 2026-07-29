@@ -380,16 +380,26 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
 
       if (currentChar === "\\" && source.charAt(i + 1) === "\n") {
         i += 2;
-        litStart = i;
+        if (current.length === 0) {
+          litStart = i;
+        }
         continue;
       }
 
       if (currentChar === "\\" && source.charAt(i + 1) === "\r") {
         if (source.charAt(i + 2) === "\n") {
           i += 3;
-          litStart = i;
+          if (current.length === 0) {
+            litStart = i;
+          }
           continue;
         }
+      }
+
+      if (currentChar === "\\" && i + 1 < source.length) {
+        current += source.charAt(i + 1);
+        i += 2;
+        continue;
       }
 
       // Try to recognize an extended glob (`?(`, `*(`, `+(`, `@(`, `!(`)

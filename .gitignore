@@ -1,4 +1,5 @@
 node_modules
+.pi
 .pnpm-store
 dist
 .DS_Store
