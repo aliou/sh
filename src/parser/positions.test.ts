@@ -60,4 +60,16 @@ describe("position tracking", () => {
     expect(expansion.pos).toEqual<Pos>({ offset: 5, line: 1, col: 6 });
     expect(expansion.end).toEqual<Pos>({ offset: 9, line: 1, col: 10 });
   });
+
+  it("keeps literal positions before escaped characters and continuations", () => {
+    const { ast } = parse("echo a\\ \\" + "\nb");
+    const cmd = expectDefined(ast.body[0]).command as SimpleCommand;
+    const word = expectDefined(expectDefined(cmd.words)[1]);
+    const part = expectDefined(word.parts[0]);
+    expect(part.type).toBe("Literal");
+    if (part.type !== "Literal") throw new Error("expected literal part");
+    expect(part.value).toBe("a b");
+    expect(part.pos).toEqual<Pos>({ offset: 5, line: 1, col: 6 });
+    expect(part.end).toEqual<Pos>({ offset: 11, line: 2, col: 2 });
+  });
 });
