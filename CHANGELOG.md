@@ -1,5 +1,16 @@
 # @aliou/sh
 
+## 0.3.0
+
+### Minor Changes
+
+- dae89a6: Raise the minimum Node version from 22 to 24 (`engines.node`). Also migrate git hooks from husky to lefthook, bump Biome to 2.5 with grit-QL plugins, and update pnpm to 11.
+
+### Patch Changes
+
+- 9b6c5e4: Parse `{varname}` file descriptor redirects in Bash and Zsh, and reject them in POSIX and mksh.
+- b07ada4: Refresh the bundled sh-ast skill: document source positions, `recoverErrors`, lazy `parseStmtsSeq`/`parseWordsSeq`, `splitBraces`/`BraceExp`, `ExtGlob`, and the select/coproc/time clauses. Drop stale limitations.
+
 ## 0.2.2
 
 ### Patch Changes
