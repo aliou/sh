@@ -106,11 +106,17 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       i += 1;
 
       // Drain any heredocs queued since the previous newline, in order.
+      // Track the newline terminating the last delimiter line we consume:
+      // that newline also terminates the command line, so it must be
+      // re-emitted as a separator after the heredoc bodies. Otherwise the
+      // next word would merge into the heredoc-opening command.
+      let delimiterNewline = -1;
       while (heredocQueue.length > 0) {
         const hd = heredocQueue.shift();
         if (!hd) break;
         const bodyStart = i;
         let body = "";
+        delimiterNewline = -1;
         while (i < source.length) {
           let lineEnd = source.indexOf("\n", i);
           if (lineEnd === -1) lineEnd = source.length;
@@ -124,7 +130,10 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
           const line = source.slice(i, realLineEnd);
           const processedLine = hd.strip ? line.replace(/^\t+/, "") : line;
           i = lineEnd < source.length ? lineEnd + 1 : lineEnd;
-          if (processedLine === hd.delimiter) break;
+          if (processedLine === hd.delimiter) {
+            if (lineEnd < source.length) delimiterNewline = lineEnd;
+            break;
+          }
           body += `${processedLine}\n`;
         }
         tokens.push({
@@ -132,6 +141,15 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
           content: body,
           pos: map.posAt(bodyStart),
           end: map.posAt(i),
+        });
+      }
+
+      if (delimiterNewline >= 0) {
+        tokens.push({
+          type: "op",
+          value: ";",
+          pos: map.posAt(delimiterNewline),
+          end: map.posAt(delimiterNewline + 1),
         });
       }
 
