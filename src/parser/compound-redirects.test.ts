@@ -8,6 +8,7 @@ import {
   forClause,
   functionDecl,
   ifClause,
+  paramExp,
   program,
   redirect,
   selectClause,
@@ -16,6 +17,7 @@ import {
   subshell,
   whileClause,
   word,
+  wordParts,
 } from "../test-helpers/ast-builders";
 
 const heredocRedirect = (op: "<<" | "<<-", target: string, body: string) => ({
@@ -69,7 +71,12 @@ describe("parse: redirects after compound commands", () => {
         stmt({
           ...forClause(
             "i",
-            [stmt(simple("echo", "$i"))],
+            [
+              stmt({
+                type: "SimpleCommand",
+                words: [word("echo"), wordParts(paramExp("i"))],
+              }),
+            ],
             [word("a"), word("b")],
           ),
           redirects: [redirect(">>", "out")],
@@ -215,7 +222,12 @@ describe("parse: redirects after compound commands", () => {
             stmt({
               ...whileClause(
                 [stmt(simple("read", "x"))],
-                [stmt(simple("echo", "$x"))],
+                [
+                  stmt({
+                    type: "SimpleCommand",
+                    words: [word("echo"), wordParts(paramExp("x"))],
+                  }),
+                ],
               ),
               redirects: [redirect("<", "in")],
             }),

@@ -164,6 +164,13 @@ export class Parser {
    * to their redirects in `skipSeparators`/`skipCaseSeparators`.
    */
   private pendingHeredocs: Redirect[] = [];
+  /**
+   * When true, redirects following a compound command's closing keyword are
+   * not attached to that compound node. Set while parsing a `coproc` body or
+   * a function-decl block so the enclosing CoprocClause/FunctionDecl captures
+   * them instead; cleared again inside nested statement lists.
+   */
+  private suppressTrailingRedirects = false;
 
   constructor(
     private readonly tokens: Token[],
@@ -392,14 +399,71 @@ export class Parser {
     const open = this.consumeSymbol("(");
     const body = this.parseStatementList("(", ")");
     const close = this.consumeSymbol(")");
-    return { type: "Subshell", body, pos: open.pos, end: close.end };
+    const node: Subshell = {
+      type: "Subshell",
+      body,
+      pos: open.pos,
+      end: close.end,
+    };
+    this.parseTrailingRedirects(node);
+    return node;
   }
 
   private parseBlock(): Block {
     const open = this.consumeSymbol("{");
     const body = this.parseStatementList("{", "}");
     const close = this.consumeSymbol("}");
-    return { type: "Block", body, pos: open.pos, end: close.end };
+    const node: Block = { type: "Block", body, pos: open.pos, end: close.end };
+    this.parseTrailingRedirects(node);
+    return node;
+  }
+
+  /**
+   * Consume any redirects immediately following a compound command's closing
+   * keyword (`done`, `fi`, `}`, `)`, `esac`, `]]`, ...) and attach them to
+   * the compound node itself, like bash and mvdan/sh do. Heredoc openers
+   * queue in `pendingHeredocs`; their bodies drain later as usual. The
+   * field stays unset when no redirects follow.
+   */
+  private parseTrailingRedirects(node: {
+    redirects?: Redirect[];
+    end?: Pos;
+  }): void {
+    if (this.suppressTrailingRedirects) return;
+    if (!this.matchRedir()) return;
+    const redirects: Redirect[] = [];
+    while (this.matchRedir()) {
+      redirects.push(this.parseRedirect());
+    }
+    node.redirects = redirects;
+    const end = this.lastEnd();
+    if (end) node.end = end;
+  }
+
+  /** Run `fn` with trailing-redirect capture disabled (see the field doc). */
+  private withSuppressedTrailingRedirects<T>(fn: () => T): T {
+    const prev = this.suppressTrailingRedirects;
+    this.suppressTrailingRedirects = true;
+    try {
+      return fn();
+    } finally {
+      this.suppressTrailingRedirects = prev;
+    }
+  }
+
+  /**
+   * Re-enable trailing-redirect capture while parsing a nested statement
+   * list, so redirects inside e.g. a coproc body still attach to the inner
+   * compound they close.
+   */
+  private allowNestedTrailingRedirects<T>(fn: () => T): T {
+    const prev = this.suppressTrailingRedirects;
+    this.suppressTrailingRedirects = false;
+    try {
+      return fn();
+    } finally {
+      this.suppressTrailingRedirects = prev;
+    }
   }
 
   /**
@@ -419,6 +483,15 @@ export class Parser {
   }
 
   private parseStatementList(
+    left: string,
+    endSymbol: SymbolTokenValue,
+  ): Statement[] {
+    return this.allowNestedTrailingRedirects(() =>
+      this.parseStatementListInner(left, endSymbol),
+    );
+  }
+
+  private parseStatementListInner(
     left: string,
     endSymbol: SymbolTokenValue,
   ): Statement[] {
@@ -476,6 +549,7 @@ export class Parser {
       end: endPos,
     };
     if (elseBranch) node.else = elseBranch;
+    if (head === "if") this.parseTrailingRedirects(node);
     return node;
   }
 
@@ -490,22 +564,16 @@ export class Parser {
     this.consumeKeyword("do");
     const body = this.parseStatementsUntilKeyword("do", ["done"]);
     const done = this.consumeKeyword("done");
-    return until
-      ? {
-          type: "WhileClause",
-          cond,
-          body,
-          until: true,
-          pos: head.pos,
-          end: done.end,
-        }
-      : {
-          type: "WhileClause",
-          cond,
-          body,
-          pos: head.pos,
-          end: done.end,
-        };
+    const node: WhileClause = {
+      type: "WhileClause",
+      cond,
+      body,
+      pos: head.pos,
+      end: done.end,
+    };
+    if (until) node.until = true;
+    this.parseTrailingRedirects(node);
+    return node;
   }
 
   private parseForOrCStyleLoop(): ForClause | CStyleLoop {
@@ -529,9 +597,16 @@ export class Parser {
     this.consumeKeyword("do");
     const body = this.parseStatementsUntilKeyword("do", ["done"]);
     const done = this.consumeKeyword("done");
-    return items
-      ? { type: "ForClause", name, items, body, pos: forTok.pos, end: done.end }
-      : { type: "ForClause", name, body, pos: forTok.pos, end: done.end };
+    const node: ForClause = {
+      type: "ForClause",
+      name,
+      body,
+      pos: forTok.pos,
+      end: done.end,
+    };
+    if (items) node.items = items;
+    this.parseTrailingRedirects(node);
+    return node;
   }
 
   private parseCStyleLoop(startPos: Pos): CStyleLoop {
@@ -588,6 +663,7 @@ export class Parser {
     if (init !== undefined) loop.init = init;
     if (cond !== undefined) loop.cond = cond;
     if (post !== undefined) loop.post = post;
+    this.parseTrailingRedirects(loop);
     return loop;
   }
 
@@ -625,16 +701,16 @@ export class Parser {
     this.consumeKeyword("do");
     const body = this.parseStatementsUntilKeyword("do", ["done"]);
     const done = this.consumeKeyword("done");
-    return items
-      ? {
-          type: "SelectClause",
-          name,
-          items,
-          body,
-          pos: head.pos,
-          end: done.end,
-        }
-      : { type: "SelectClause", name, body, pos: head.pos, end: done.end };
+    const node: SelectClause = {
+      type: "SelectClause",
+      name,
+      body,
+      pos: head.pos,
+      end: done.end,
+    };
+    if (items) node.items = items;
+    this.parseTrailingRedirects(node);
+    return node;
   }
 
   private parseFunctionDecl(): FunctionDecl {
@@ -659,14 +735,20 @@ export class Parser {
       this.consumeSymbol(")");
     }
     if (this.matchSymbol("{")) {
-      const block = this.parseBlock();
-      return {
+      // Redirects after the body block belong to the FunctionDecl, not the
+      // (inlined) Block, so capture them here.
+      const block = this.withSuppressedTrailingRedirects(() =>
+        this.parseBlock(),
+      );
+      const node: FunctionDecl = {
         type: "FunctionDecl",
         name,
         body: block.body,
         pos: startPos,
         end: block.end ?? startPos,
       };
+      this.parseTrailingRedirects(node);
+      return node;
     }
     throw new Error("Expected function body block");
   }
@@ -716,13 +798,15 @@ export class Parser {
       this.skipSeparators();
     }
     const esac = this.consumeKeyword("esac");
-    return {
+    const node: CaseClause = {
       type: "CaseClause",
       word,
       items,
       pos: head.pos,
       end: esac.end,
     };
+    this.parseTrailingRedirects(node);
+    return node;
   }
 
   private parseTimeClause(): TimeClause {
@@ -741,12 +825,14 @@ export class Parser {
     checkLang(this.options.dialect, open.pos, "[[", ["bash", "mksh", "zsh"]);
     const x = this.parseTestExpr(0);
     const close = this.consumeKeyword("]]");
-    return {
+    const node: TestClause = {
       type: "TestClause",
       x,
       pos: open.pos,
       end: close.end,
     };
+    this.parseTrailingRedirects(node);
+    return node;
   }
 
   private parseTestExpr(minPrec: number): TestExpr {
@@ -874,26 +960,40 @@ export class Parser {
       ) {
         const name = tokenPartsText(nameToken.parts);
         this.consume();
-        const body = this.parseStatement();
-        return {
+        const body = this.withSuppressedTrailingRedirects(() =>
+          this.parseStatement(),
+        );
+        const node: CoprocClause = {
           type: "CoprocClause",
           name,
           body,
           pos: head.pos,
           end: body.end ?? head.end,
         };
+        this.parseTrailingRedirects(node);
+        return node;
       }
     }
-    const body = this.parseStatement();
-    return {
+    const body = this.withSuppressedTrailingRedirects(() =>
+      this.parseStatement(),
+    );
+    const node: CoprocClause = {
       type: "CoprocClause",
       body,
       pos: head.pos,
       end: body.end ?? head.end,
     };
+    this.parseTrailingRedirects(node);
+    return node;
   }
 
   private parseCaseItemBody(): Statement[] {
+    return this.allowNestedTrailingRedirects(() =>
+      this.parseCaseItemBodyInner(),
+    );
+  }
+
+  private parseCaseItemBodyInner(): Statement[] {
     const body: Statement[] = [];
     this.skipCaseSeparators();
     while (!this.matchKeyword("esac") && !this.isCaseItemEnd()) {
@@ -911,6 +1011,15 @@ export class Parser {
   }
 
   private parseStatementsUntilKeyword(
+    left: string,
+    endKeywords: string[],
+  ): Statement[] {
+    return this.allowNestedTrailingRedirects(() =>
+      this.parseStatementsUntilKeywordInner(left, endKeywords),
+    );
+  }
+
+  private parseStatementsUntilKeywordInner(
     left: string,
     endKeywords: string[],
   ): Statement[] {
