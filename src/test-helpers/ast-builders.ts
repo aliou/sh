@@ -34,6 +34,7 @@ import {
   type Word,
   type WordPart,
 } from "../ast";
+import { parseArithmetic } from "../parser/arith-parser";
 
 type ParamOp = NonNullable<ParamExp["exp"]>["op"];
 
@@ -142,10 +143,9 @@ export const letClause = (exprs: Word[], redirects?: Redirect[]): LetClause => {
   return l;
 };
 /**
- * Build a CStyleLoop. Each clause is a raw arithmetic literal value (e.g.
- * `"i = 0"`); pass `undefined` to omit. The clause is wrapped as an
- * `ArithLit` placeholder; tests that care about structured arithmetic
- * should compare against parser output via `toMatchAst`.
+ * Build a CStyleLoop. Each clause is raw arithmetic source (e.g. `"i=0"`),
+ * parsed with the real arithmetic parser so fixtures match parser output;
+ * pass `undefined` to omit.
  */
 export const cStyleLoop = (
   body: Statement[],
@@ -153,10 +153,15 @@ export const cStyleLoop = (
   cond?: string,
   post?: string,
 ): CStyleLoop => {
+  const parseClause = (raw: string) => {
+    const parsed = parseArithmetic(raw, { offset: 0, line: 1, col: 1 });
+    if (!parsed) throw new Error(`fixture clause is empty: ${raw}`);
+    return parsed;
+  };
   const c: CStyleLoop = { type: "CStyleLoop", body, ...P };
-  if (init !== undefined) c.init = { type: "ArithLit", value: init, ...P };
-  if (cond !== undefined) c.cond = { type: "ArithLit", value: cond, ...P };
-  if (post !== undefined) c.post = { type: "ArithLit", value: post, ...P };
+  if (init !== undefined) c.init = parseClause(init);
+  if (cond !== undefined) c.cond = parseClause(cond);
+  if (post !== undefined) c.post = parseClause(post);
   return c;
 };
 export const redirect = (op: RedirOp, target: string, fd?: string): Redirect =>
