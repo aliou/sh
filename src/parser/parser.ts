@@ -155,6 +155,15 @@ function trimmedTopLevelPart(
 export class Parser {
   private index = 0;
   private comments: CommentNode[] = [];
+  /**
+   * Redirects that opened a heredoc (`<<`/`<<-`) but whose body token the
+   * tokenizer hasn't emitted yet, in opener order. The tokenizer emits one
+   * body token per queued heredoc right after the newline that ends the
+   * command line, so bodies can arrive after later redirects on the same
+   * line or after a trailing separator (`;`, `&&`, `||`, `|`). Bodies drain
+   * to their redirects in `skipSeparators`/`skipCaseSeparators`.
+   */
+  private pendingHeredocs: Redirect[] = [];
 
   constructor(
     private readonly tokens: Token[],
@@ -1111,28 +1120,43 @@ export class Parser {
           end: target.end ?? targetToken.end,
         };
     if (token.op === "<<" || token.op === "<<-") {
-      this.skipSeparators();
-      if (this.peek()?.type === "heredoc-body") {
-        const bodyToken = this.consume();
-        if (bodyToken.type === "heredoc-body") {
-          redirect.heredoc = {
-            type: "Word",
-            parts: [
-              {
-                type: "Literal",
-                value: bodyToken.content,
-                pos: bodyToken.pos,
-                end: bodyToken.end,
-              },
-            ],
-            pos: bodyToken.pos,
-            end: bodyToken.end,
-          };
-          redirect.end = bodyToken.end;
-        }
-      }
+      // The body token only exists after the newline ending this command
+      // line, so queue the redirect; `drainPendingHeredocs` attaches the
+      // body once it surfaces.
+      this.pendingHeredocs.push(redirect);
     }
     return redirect;
+  }
+
+  /**
+   * Attach tokenizer-emitted heredoc-body tokens to the redirects that
+   * opened them, in opener order. Orphan body tokens (no pending redirect)
+   * are left in the stream for the caller to report.
+   */
+  private drainPendingHeredocs(): void {
+    while (
+      this.peek()?.type === "heredoc-body" &&
+      this.pendingHeredocs.length > 0
+    ) {
+      const redirect = this.pendingHeredocs.shift();
+      if (!redirect) break;
+      const bodyToken = this.consume();
+      if (bodyToken.type !== "heredoc-body") break;
+      redirect.heredoc = {
+        type: "Word",
+        parts: [
+          {
+            type: "Literal",
+            value: bodyToken.content,
+            pos: bodyToken.pos,
+            end: bodyToken.end,
+          },
+        ],
+        pos: bodyToken.pos,
+        end: bodyToken.end,
+      };
+      redirect.end = bodyToken.end;
+    }
   }
 
   private convertWordPart(part: TokenWordPart): WordPart {
@@ -1415,18 +1439,30 @@ export class Parser {
   }
 
   private skipSeparators() {
-    while (this.matchOp(";") || this.matchComment()) {
+    while (true) {
+      // Newline separators are followed by any heredoc bodies queued on
+      // the line that just ended; drain them to their redirects first.
+      this.drainPendingHeredocs();
+      if (this.matchOp(";")) {
+        this.consume();
+        continue;
+      }
       if (this.matchComment()) {
         this.consumeComment();
-      } else {
-        this.consume();
+        continue;
       }
+      break;
     }
   }
 
   private skipCaseSeparators() {
-    while (this.matchOp(";") && !this.peekOp(";")) {
-      this.consume();
+    while (true) {
+      this.drainPendingHeredocs();
+      if (this.matchOp(";") && !this.peekOp(";")) {
+        this.consume();
+        continue;
+      }
+      break;
     }
   }
 
