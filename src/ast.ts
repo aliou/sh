@@ -242,36 +242,49 @@ export type SimpleCommand = Located & {
   assignments?: Assignment[];
   redirects?: Redirect[];
 };
-export type Subshell = Located & { type: "Subshell"; body: Statement[] };
-export type Block = Located & { type: "Block"; body: Statement[] };
+export type Subshell = Located & {
+  type: "Subshell";
+  body: Statement[];
+  redirects?: Redirect[];
+};
+export type Block = Located & {
+  type: "Block";
+  body: Statement[];
+  redirects?: Redirect[];
+};
 export type IfClause = Located & {
   type: "IfClause";
   cond: Statement[];
   then: Statement[];
   else?: Statement[];
+  redirects?: Redirect[];
 };
 export type WhileClause = Located & {
   type: "WhileClause";
   cond: Statement[];
   body: Statement[];
   until?: boolean;
+  redirects?: Redirect[];
 };
 export type ForClause = Located & {
   type: "ForClause";
   name: string;
   items?: Word[];
   body: Statement[];
+  redirects?: Redirect[];
 };
 export type SelectClause = Located & {
   type: "SelectClause";
   name: string;
   items?: Word[];
   body: Statement[];
+  redirects?: Redirect[];
 };
 export type FunctionDecl = Located & {
   type: "FunctionDecl";
   name: string;
   body: Statement[];
+  redirects?: Redirect[];
 };
 export type CaseItem = Located & {
   type: "CaseItem";
@@ -282,6 +295,7 @@ export type CaseClause = Located & {
   type: "CaseClause";
   word: Word;
   items: CaseItem[];
+  redirects?: Redirect[];
 };
 export type TimeClause = Located & { type: "TimeClause"; command: Statement };
 export type BinaryTestOp =
@@ -341,12 +355,17 @@ export type UnaryTest = Located & {
 };
 export type ParenTest = Located & { type: "ParenTest"; x: TestExpr };
 export type TestExpr = BinaryTest | UnaryTest | ParenTest | Word;
-export type TestClause = Located & { type: "TestClause"; x: TestExpr };
+export type TestClause = Located & {
+  type: "TestClause";
+  x: TestExpr;
+  redirects?: Redirect[];
+};
 export type ArithCmd = Located & { type: "ArithCmd"; x?: ArithExpr };
 export type CoprocClause = Located & {
   type: "CoprocClause";
   name?: string;
   body: Statement;
+  redirects?: Redirect[];
 };
 export type DeclClause = Located & {
   type: "DeclClause";
@@ -366,6 +385,7 @@ export type CStyleLoop = Located & {
   cond?: ArithExpr;
   post?: ArithExpr;
   body: Statement[];
+  redirects?: Redirect[];
 };
 export type CommentNode = Located & { type: "Comment"; text: string };
 export type Pipeline = Located & { type: "Pipeline"; commands: Statement[] };
