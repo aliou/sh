@@ -1,5 +1,13 @@
 # @aliou/sh
 
+## 0.3.1
+
+### Patch Changes
+
+- 8ad6f38: Attach redirects written after compound commands (`fi`, `done`, `}`, `)`, `esac`, `]]`, function bodies, coproc) to the compound AST node instead of a phantom word-less `SimpleCommand` statement. Covers `while read x; do ...; done < files`, `{ a; b; } > out`, `if foo; then bar; fi <<EOF`, and fd/multi-redirect shapes; nested compounds, function/coproc bodies, elif chains, and `time` blocks each keep redirects at the correct nesting level.
+- 5fdee45: Fix parsing of commands that open multiple heredocs on one line (`cat << A << B`) or place a separator after a heredoc opener (`cmd << EOF && next`): heredoc bodies are now queued per command line and assigned to their redirects in opener order instead of throwing an unexpected-token parse error.
+- 3952fa2: Fix heredoc commands swallowing the statement that follows the delimiter line: a heredoc as the last command of an if/for/while body no longer throws, and a command after the delimiter now parses as its own statement instead of merging into the heredoc-opening command.
+
 ## 0.3.0
 
 ### Minor Changes
