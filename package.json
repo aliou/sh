@@ -13,7 +13,7 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": ">=24"
+    "node": ">=22"
   },
   "exports": {
     ".": {
@@ -41,7 +41,7 @@
     "@aliou/biome-plugins": "0.12.0",
     "@biomejs/biome": "^2.5.5",
     "@changesets/cli": "^2.29.8",
-    "@types/node": "^24.0.0",
+    "@types/node": "^22.0.0",
     "lefthook": "^1.11.0",
     "rolldown": "^1.0.0-rc.1",
     "typescript": "^5.8.0",

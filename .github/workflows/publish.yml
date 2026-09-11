@@ -34,7 +34,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          # Build with the minimum supported Node so the published dist
+          # can't silently depend on a newer runtime.
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
           scope: "@aliou"
           cache: "pnpm"

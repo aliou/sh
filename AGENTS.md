@@ -1,10 +1,10 @@
 # Agents
 
-Goal: TypeScript reimplementation of a shell parser/AST (mvdan/sh-style), targeting Node.js 24+.
+Goal: TypeScript reimplementation of a shell parser/AST (mvdan/sh-style), targeting Node.js 22+.
 
 ## Dev env
 - Nix: `nix develop`
-- Node: 24+
+- Node: 22+
 - Package manager: pnpm (see `package.json#packageManager`)
 
 ## Common commands

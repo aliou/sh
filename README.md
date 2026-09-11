@@ -111,7 +111,7 @@ npm install @aliou/sh
 
 ## Development
 
-Requires [Nix](https://nixos.org/) (provides Node 24 and pnpm):
+Requires [Nix](https://nixos.org/) (provides Node 22 and pnpm):
 
 ```bash
 nix develop
