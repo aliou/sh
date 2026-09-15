@@ -1,10 +1,16 @@
 # @aliou/sh
 
-TypeScript shell parser inspired by [mvdan/sh](https://github.com/mvdan/sh). Parses POSIX/Bash/mksh/zsh shell commands into a typed AST.
+Shell parser and typed AST for TypeScript. Handles POSIX, Bash, mksh, and zsh syntax. Zero runtime dependencies, ~66 KB bundled.
 
-Zero runtime dependencies. ~66 KB bundled.
+## Install
 
-## Usage
+```bash
+npm install @aliou/sh
+```
+
+Requires Node.js 22+.
+
+## Quick start
 
 ```typescript
 import { parse } from "@aliou/sh";
@@ -14,77 +20,56 @@ const { ast } = parse('echo "hello $USER" | grep hello');
 // ast.body[0].command.type === "Pipeline"
 ```
 
-The parser returns a `Program` node containing `Statement` nodes. Each statement wraps a `Command`, which is one of:
+`parse` returns a `Program` whose body holds `Statement` nodes. Every statement wraps a `Command`:
 
-- `SimpleCommand` -- words, assignments, redirects
-- `Pipeline`, `Logical` (`&&`, `||`)
-- `IfClause`, `WhileClause`, `ForClause`, `SelectClause`, `CaseClause`
-- `FunctionDecl`, `Subshell`, `Block`
-- `TestClause` (`[[ ]]`), `ArithCmd` (`(( ))`), `CoprocClause`, `TimeClause`
-- `DeclClause` (`declare`, `local`, `export`, `readonly`, `typeset`, `nameref`)
-- `LetClause` (`let`), `CStyleLoop` (`for (( ; ; ))`)
+| Command | Shell syntax |
+|---|---|
+| `SimpleCommand` | words, assignments, redirects |
+| `Pipeline` | `a \| b` |
+| `Logical` | `a && b`, `a \|\| b` |
+| `IfClause`, `WhileClause`, `ForClause`, `SelectClause`, `CaseClause` | control flow |
+| `FunctionDecl` | `foo() {}`, `function foo {}` |
+| `Subshell`, `Block` | `( ... )`, `{ ... }` |
+| `TestClause`, `ArithCmd` | `[[ ... ]]`, `(( ... ))` |
+| `CoprocClause`, `TimeClause` | `coproc`, `time` |
+| `DeclClause` | `declare`, `local`, `export`, `readonly`, `typeset`, `nameref` |
+| `LetClause` | `let i++ j=2` |
+| `CStyleLoop` | `for (( ; ; ))` |
 
-Words contain typed parts: `Literal`, `SglQuoted`, `DblQuoted`, `ParamExp`, `CmdSubst`, `ArithExp`, `ProcSubst`, `BraceExp`, `ExtGlob`.
+Words hold typed parts: `Literal`, `SglQuoted`, `DblQuoted`, `ParamExp`, `CmdSubst`, `ArithExp`, `ProcSubst`, `BraceExp`, `ExtGlob`. Every node carries `pos` and `end` (`offset`, `line`, `col`) pointing into the source.
 
-All AST nodes carry source positions via `pos` and `end` (`Pos`: `offset`, `line`, `col`).
+## Example: flag dangerous commands
 
-### Example: extract command names
+Each node's `type` field narrows the union, so a generic walker can catch specific commands wherever they appear — pipelines, `&&` chains, subshells, command substitutions:
 
 ```typescript
 import { parse, type SimpleCommand } from "@aliou/sh";
 
-function extractCommandNames(node: unknown): string[] {
+function findRmRf(node: unknown): string[] {
   if (!node || typeof node !== "object") return [];
-  const n = node as Record<string, unknown>;
-  const names: string[] = [];
 
-  if (n.type === "SimpleCommand") {
-    const cmd = n as unknown as SimpleCommand;
-    if (cmd.words?.length) {
-      const first = cmd.words[0];
-      if (first.parts.length === 1 && first.parts[0].type === "Literal") {
-        names.push(first.parts[0].value);
-      }
+  const cmd = node as SimpleCommand;
+  if (cmd.type === "SimpleCommand") {
+    const [name, ...args] = (cmd.words ?? [])
+      .map((w) => (w.parts[0].type === "Literal" ? w.parts[0].value : ""))
+      .filter(Boolean);
+    if (name === "rm" && args.some((a) => a.startsWith("-") && a.includes("r") && a.includes("f"))) {
+      return [`rm ${args.join(" ")}`];
     }
   }
 
-  for (const val of Object.values(n)) {
-    if (Array.isArray(val)) {
-      for (const item of val) names.push(...extractCommandNames(item));
-    } else if (val && typeof val === "object") {
-      names.push(...extractCommandNames(val));
-    }
-  }
-  return names;
+  return Object.values(cmd).flatMap((v) =>
+    Array.isArray(v) ? v.flatMap(findRmRf) : findRmRf(v),
+  );
 }
 
-const { ast } = parse("grep -rn npm package.json | head -5");
-extractCommandNames(ast); // ["grep", "head"]
+const { ast } = parse("deploy.sh && rm -rf ./scratch; cp -r dist/ b/ || (rm -rf b/ && exit 1)");
+findRmRf(ast); // ["rm -rf ./scratch", "rm -rf b/"]
 ```
 
-## Supported syntax
+This kind of check is the project's main use case: inspect or rewrite commands before handing a script to something that executes it.
 
-- Simple commands, pipelines, logical operators (`&&`, `||`)
-- Single and double quotes, parameter expansion (`$var`, `${var:-default}`)
-- Command substitution (`$(cmd)`, `` `cmd` ``), arithmetic expansion (`$((expr))`)
-- Process substitution (`<(cmd)`, `>(cmd)`)
-- Heredocs (`<<`, `<<-`), herestrings (`<<<`)
-- All redirect operators (`>`, `>>`, `<`, `>&`, `<&`, `<>`, `>|`, `&>`, `&>>`), including `{varname}` file-descriptor redirects (`foo {fd}<file`, Bash/Zsh only)
-- Assignments (`FOO=bar cmd`), append assignments (`FOO+=bar`)
-- Array expressions (`arr=(a b c)`, `arr=([0]=x [1]=y)`)
-- Declaration builtins as special forms (`declare`, `local`, `export`, `readonly`, `typeset`, `nameref`)
-- `let` expressions (`let i++ j=2`)
-- Control flow: `if/elif/else/fi`, `while/until`, `for/in`, `for ((...))`, `select/in`, `case/esac`
-- Functions (`foo() {}`, `function foo {}`)
-- Subshells `()`, blocks `{}`
-- `[[ ]]` test expressions, `(( ))` arithmetic commands
-- `coproc`, `time`, negation (`!`)
-- Extended globs (`@(foo)`, `*(bar)`) in Bash/mksh mode
-- Comments (optionally preserved via `keepComments` option), backslash line continuations, background (`&`), semicolons
-
-Brace expansion (`{a,b}`, `{1..5}`) is available via the `splitBraces` helper; the parser does not emit it by default.
-
-## Parser options
+## Options
 
 ```typescript
 interface ParseOptions {
@@ -94,43 +79,58 @@ interface ParseOptions {
 }
 ```
 
-Use `recoverErrors: true` to get a partial AST and a list of non-fatal parse errors instead of throwing.
+Set `recoverErrors: true` to get a partial AST plus an `errors` array instead of a thrown exception. Useful for analyzing incomplete or broken scripts (editors, linters).
+
+## Lazy parsing
+
+For large scripts, stream top-level nodes without building the whole AST:
+
+```typescript
+import { parseStmtsSeq, parseWordsSeq } from "@aliou/sh";
+
+for (const stmt of parseStmtsSeq(source)) { /* one statement at a time */ }
+for (const word of parseWordsSeq(source)) { /* one word at a time */ }
+```
 
 ## Other exports
 
-- `parseStmtsSeq(source, options?)` -- lazy generator yielding top-level statements
-- `parseWordsSeq(source, options?)` -- lazy generator yielding words
-- `splitBraces(word)` -- expand `{a,b}` / `{1..5}` brace expansion in a word
-- `NO_POS` -- sentinel position for nodes built outside the parser
+- `splitBraces(word)` — expand `{a,b}` / `{1..5}` brace expansion into a word. The parser does not emit brace expansions by default.
+- `NO_POS` — sentinel position for nodes you build by hand.
+- Full TypeScript types for every AST node.
 
-## Install
+## Supported syntax
 
-```bash
-npm install @aliou/sh
-```
-
-## Development
-
-Requires [Nix](https://nixos.org/) (provides Node 22 and pnpm):
-
-```bash
-nix develop
-
-pnpm install     # install deps
-pnpm test        # run tests (vitest)
-pnpm typecheck   # tsc --noEmit
-pnpm lint        # biome check
-pnpm format      # biome check --write
-pnpm build       # rolldown + tsc declarations
-```
-
-Git hooks (via lefthook):
-- **pre-commit**: staged file formatting/linting + typecheck
-- **pre-push**: tests
+- Simple commands, pipelines, `&&`, `||`, background (`&`), semicolons
+- Quoting: `'...'`, `"..."`, backslash continuations
+- Parameter expansion: `$var`, `${var:-default}`, `${var/pat/repl}`, slices, indirection
+- Command substitution: `$(cmd)`, `` `cmd` ``
+- Arithmetic: `$((expr))`, `((expr))`, C-style `for (( ; ; ))`
+- Process substitution: `<(cmd)`, `>(cmd)`
+- Heredocs (`<<`, `<<-`) and herestrings (`<<<`)
+- Redirects: `>`, `>>`, `<`, `>&`, `<&`, `<>`, `>|`, `&>`, `&>>`, plus `{varname}` fd redirects (Bash/zsh)
+- Assignments and appends: `FOO=bar`, `FOO+=bar`, command-scoped env
+- Arrays: `arr=(a b c)`, `arr=([0]=x [1]=y)`
+- Control flow: `if/elif/else/fi`, `while/until`, `for/in`, `select/in`, `case/esac`
+- Functions, subshells, blocks, `[[ ]]`, `(( ))`, `coproc`, `time`, `!`
+- Extended globs `@(foo)`, `*(bar)` (Bash/mksh)
+- Comments (with `keepComments: true`)
 
 ## Status
 
-Work in progress. Covers the Bash subset needed for AST-based command analysis (command classification, variable mutation tracking, guardrail enforcement). Not a complete POSIX/Bash parser.
+Work in progress. Covers the Bash subset needed for AST-based command analysis (classification, variable-mutation tracking, guardrail enforcement). It is not a complete POSIX/Bash parser; edge cases in less common dialect features may be missing.
+
+## Development
+
+Requires [Nix](https://nixos.org/) for the dev shell:
+
+```bash
+nix develop
+pnpm install
+pnpm test        # vitest
+pnpm typecheck   # tsc --noEmit
+pnpm lint        # biome
+pnpm build       # rolldown + declarations
+```
 
 ## License
 

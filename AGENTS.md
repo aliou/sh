@@ -31,4 +31,4 @@ Release workflow (using [changesets](https://github.com/changesets/changesets)):
 2. Add a changeset: `pnpm changeset` (select bump type: patch/minor/major, write summary)
 3. Commit the changeset file with your code and push/merge to `main`
 4. The release workflow opens a "Version Packages" PR that bumps the version and updates CHANGELOG.md
-5. Merge that PR to publish to npmjs.com
+5. Merge that PR; the publish workflow stages the release on npm (npm stage publish). Promote the staged release on npmjs.com to complete publication.
