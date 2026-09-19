@@ -99,6 +99,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       tokens.push({
         type: "op",
         value: ";",
+        newline: true,
         pos: map.posAt(i),
         end: map.posAt(i + 1),
       });
@@ -148,6 +149,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
         tokens.push({
           type: "op",
           value: ";",
+          newline: true,
           pos: map.posAt(delimiterNewline),
           end: map.posAt(delimiterNewline + 1),
         });

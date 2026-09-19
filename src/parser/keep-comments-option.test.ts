@@ -30,4 +30,21 @@ describe("parse (phase 27: comments)", () => {
       { type: "Comment", text: " trailing" },
     ]);
   });
+
+  it("collects comment between && and the continued command", () => {
+    const result = parse("foo && # first\nbar", { keepComments: true });
+    expect(result.ast.comments).toMatchAst([
+      { type: "Comment", text: " first" },
+    ]);
+  });
+
+  it("collects comments between || and pipe continuations", () => {
+    const result = parse("foo || # one\nbar | # two\nbaz", {
+      keepComments: true,
+    });
+    expect(result.ast.comments).toMatchAst([
+      { type: "Comment", text: " one" },
+      { type: "Comment", text: " two" },
+    ]);
+  });
 });
