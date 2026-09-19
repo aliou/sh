@@ -310,6 +310,7 @@ export class Parser {
       if (opToken.type !== "op") {
         throw new Error("Expected logical operator");
       }
+      this.skipOperatorContinuation();
       const rightCommand = this.parsePipeline();
       const left = this.wrapStatement(leftCommand);
       const right = this.wrapStatement(rightCommand);
@@ -334,6 +335,7 @@ export class Parser {
     const commands: Statement[] = [firstStmt];
     while (this.matchOp("|")) {
       this.consume();
+      this.skipOperatorContinuation();
       const next = this.parseCommandAtom();
       commands.push(this.wrapStatement(next));
     }
@@ -1545,6 +1547,32 @@ export class Parser {
     };
     if (append) assignment.append = true;
     return assignment;
+  }
+
+  /**
+   * Skip comments and line breaks between a binary operator (`&&`, `||`,
+   * `|`) and the command continuing on the next line, e.g. `cmd && # note\n`
+   * `next`. Bash accepts comments and blank lines inside an operator
+   * continuation. Any heredoc bodies queued before those separators are
+   * drained along the way. A literal `;` after the operator is not skipped,
+   * so `cmd && ; next` still fails.
+   */
+  private skipOperatorContinuation() {
+    while (true) {
+      this.drainPendingHeredocs();
+      if (this.matchComment()) {
+        this.consumeComment();
+        continue;
+      }
+      // Newline-derived `;` separators come from line breaks in the
+      // continuation; a literal `;` carries no newline marker.
+      const token = this.peek();
+      if (token?.type === "op" && token.value === ";" && token.newline) {
+        this.consume();
+        continue;
+      }
+      break;
+    }
   }
 
   private skipSeparators() {
