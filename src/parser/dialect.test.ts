@@ -95,6 +95,10 @@ describe("dialect enforcement: POSIX", () => {
 });
 
 describe("dialect enforcement: mksh", () => {
+  it("rejects C-style for loops", () => {
+    expectErr("for ((i=0; i<3; i++)); do :; done", "mksh", /for \(\(/);
+  });
+
   it("rejects ${!foo*}", () => {
     expectErr("echo ${!foo*}", "mksh", /\$\{!/);
   });
@@ -105,6 +109,56 @@ describe("dialect enforcement: mksh", () => {
 
   it("rejects named file descriptor redirects", () => {
     expectErr("foo {fd}<f", "mksh", /\{varname\}.*bash\/zsh feature/);
+  });
+});
+
+describe("dialect enforcement: fail-open parameter forms", () => {
+  it.each(["${}", "${:-word}", "${:+word}"])(
+    "rejects a missing parameter name in %s",
+    (source) => {
+      expectErr(source, "bash", /parameter name/);
+      expectErr(source, "posix", /parameter name/);
+      expectErr(source, "mksh", /parameter name/);
+      expect(() => parse(source, { dialect: "zsh" })).not.toThrow();
+    },
+  );
+
+  it("rejects non-POSIX array, slice, replacement, and indirect forms", () => {
+    for (const source of ["${foo[1]}", "${foo:1}", "${foo/a/b}", "${!foo}"]) {
+      expectErr(source, "posix", /parameter|array/);
+    }
+  });
+
+  it("rejects zsh-only force expansion outside zsh", () => {
+    for (const source of ["${foo:#bar}", "${foo:|bar}", "${foo:*bar}"]) {
+      expectErr(source, "bash", /zsh parameter/);
+      expectErr(source, "mksh", /zsh parameter/);
+    }
+  });
+
+  it("rejects zsh process substitution outside zsh", () => {
+    expectErr("foo =(bar)", "bash", /=\(\.\.\.\)/);
+    expectErr("foo =(bar)", "posix", /=\(\.\.\.\)/);
+    expectErr("foo =(bar)", "mksh", /=\(\.\.\.\)/);
+    expect(() => parse("foo =(bar)", { dialect: "zsh" })).not.toThrow();
+  });
+
+  it("parses ksh-style command substitution as commands", () => {
+    const result = parse("echo ${ printf secret;}", { dialect: "bash" });
+    const command = result.ast.body[0]?.command;
+    expect(command?.type).toBe("SimpleCommand");
+    if (command?.type !== "SimpleCommand") return;
+    const substitution = command.words?.[1]?.parts[0];
+    expect(substitution?.type).toBe("CmdSubst");
+    if (substitution?.type !== "CmdSubst") return;
+    const inner = substitution.stmts[0]?.command;
+    expect(inner?.type).toBe("SimpleCommand");
+    if (inner?.type !== "SimpleCommand") return;
+    expect(inner.words?.map((word) => word.parts[0])).toMatchObject([
+      { type: "Literal", value: "printf" },
+      { type: "Literal", value: "secret" },
+    ]);
+    expectErr("echo ${ printf secret;}", "posix", /stmts/);
   });
 });
 

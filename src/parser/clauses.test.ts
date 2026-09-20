@@ -102,6 +102,14 @@ describe("parse (phase 7: for clauses)", () => {
       ast: program(stmt(forClause("i", [stmt(simple("c"))]))),
     });
   });
+
+  it("allows comments and newlines before the in clause", () => {
+    expect(parse("for i # items follow\n in a b; do c; done")).toMatchAst({
+      ast: program(
+        stmt(forClause("i", [stmt(simple("c"))], [word("a"), word("b")])),
+      ),
+    });
+  });
 });
 
 describe("parse (phase 8: select clauses)", () => {
@@ -150,6 +158,14 @@ describe("parse (phase 9: functions and case)", () => {
             caseItem([word("b")], [stmt(simple("z"))]),
           ]),
         ),
+      ),
+    });
+  });
+
+  it("allows newlines around `in` and an optional leading pattern paren", () => {
+    expect(parse("case x\nin\n(a) y ;;\nesac")).toMatchAst({
+      ast: program(
+        stmt(caseClause("x", [caseItem([word("a")], [stmt(simple("y"))])])),
       ),
     });
   });
