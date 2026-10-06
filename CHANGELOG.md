@@ -1,5 +1,11 @@
 # @aliou/sh
 
+## 0.3.4
+
+### Patch Changes
+
+- c240d09: Add MIT license (was UNLICENSED), with attribution to mvdan/sh (BSD 3-Clause, © Daniel Martí) from which this project is ported.
+
 ## 0.3.3
 
 ### Patch Changes
