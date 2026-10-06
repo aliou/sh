@@ -215,10 +215,12 @@ describe("parse (phase 1: simple commands)", () => {
 
   it("rejects && with no right-hand side", () => {
     expect(() => parse("foo && # comment")).toThrowError(
-      "Expected a command word",
+      "Expected command after && at 1:5",
     );
 
-    expect(() => parse("foo &&")).toThrowError("Expected a command word");
+    expect(() => parse("foo &&")).toThrowError(
+      "Expected command after && at 1:5",
+    );
   });
 
   it("rejects a literal ; after an operator", () => {

@@ -313,6 +313,15 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       continue;
     }
 
+    // zsh's `=(...)` process substitution is intentionally still represented
+    // as a word until the AST grows a dedicated variant, but other dialects
+    // must not silently accept the syntax.
+    if (ch === "=" && source.charAt(i + 1) === "(" && atBoundary) {
+      checkLang(options.dialect, map.posAt(i), "=(...) process substitution", [
+        "zsh",
+      ]);
+    }
+
     {
       const redir = tryRedirOp(source, i);
       if (redir) {

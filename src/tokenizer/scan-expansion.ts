@@ -73,16 +73,43 @@ export function scanExpansion(
       j++;
     }
     const inner = source.slice(pos + 2, j - 1);
+    const expansionPos = map.posAt(pos);
+
+    // ksh-style command substitution: `${ commands; }` and `${| commands; }`.
+    // Parse the body as a command substitution so security-sensitive AST
+    // consumers still see the commands rather than an opaque parameter name.
+    if (/^(?:\||[ \t\r\n])/.test(inner) && /;[ \t\r\n]*$/.test(inner)) {
+      checkLang(options.dialect, expansionPos, "`$" + "{ stmts;}`", [
+        "bash",
+        "mksh",
+      ]);
+      const pipePrefix = inner.startsWith("|") ? 1 : 0;
+      const commandStart =
+        pipePrefix +
+        (inner.slice(pipePrefix).match(/^[ \t\r\n]*/)?.[0].length ?? 0);
+      const raw = inner.slice(commandStart).replace(/;[ \t\r\n]*$/, "");
+      return {
+        part: {
+          type: "cmd-subst",
+          raw,
+          innerOffset: pos + 2 + commandStart,
+          pos: expansionPos,
+          end: map.posAt(j),
+        },
+        end: j,
+      };
+    }
     if (
       inner.charAt(0) === "!" &&
       /^![A-Za-z_][A-Za-z0-9_]*[*@]$/.test(inner)
     ) {
-      checkLang(options.dialect, map.posAt(pos), "$" + "{!name*}", [
+      checkLang(options.dialect, expansionPos, "$" + "{!name*}", [
         "bash",
         "zsh",
       ]);
     }
-    const part = parseBracedParam(inner, map.posAt(pos), map.posAt(j));
+    const part = parseBracedParam(inner, expansionPos, map.posAt(j));
+    validateBracedParam(part, inner, options, expansionPos);
     return { part, end: j };
   }
 
@@ -97,6 +124,58 @@ export function scanExpansion(
   }
 
   return null;
+}
+
+function validateBracedParam(
+  part: Extract<TokenWordPart, { type: "param" }>,
+  inner: string,
+  options: ParseOptions,
+  pos: { offset: number; line: number; col: number },
+): void {
+  // zsh uniquely permits an omitted parameter name, e.g. `${}` and
+  // `${:-word}`. Other dialects must reject it instead of producing an
+  // empty/invalid ParamExp that policy consumers may overlook.
+  if (
+    part.name === "" ||
+    (!isNameStart(part.name.charAt(0)) &&
+      !isDigit(part.name.charAt(0)) &&
+      !specialParams.has(part.name.charAt(0)))
+  ) {
+    checkLang(options.dialect, pos, "empty or invalid parameter name", ["zsh"]);
+  }
+
+  if (part.index !== undefined) {
+    const allowed = part.index.trimStart().startsWith("(")
+      ? (["zsh"] as const)
+      : (["bash", "mksh", "zsh"] as const);
+    checkLang(options.dialect, pos, "array parameter expansion", [...allowed]);
+  }
+  if (part.excl) {
+    checkLang(options.dialect, pos, "indirect parameter expansion", [
+      "bash",
+      "zsh",
+    ]);
+  }
+  if (part.replace) {
+    checkLang(options.dialect, pos, "parameter pattern replacement", [
+      "bash",
+      "mksh",
+      "zsh",
+    ]);
+  }
+  if (part.slice) {
+    // zsh's force-expansion operators happen to share the `:` prefix with
+    // slices, but are not portable substring syntax.
+    if (/^[^:]+:[#|*]/.test(inner)) {
+      checkLang(options.dialect, pos, "zsh parameter force expansion", ["zsh"]);
+    } else {
+      checkLang(options.dialect, pos, "parameter slicing", [
+        "bash",
+        "mksh",
+        "zsh",
+      ]);
+    }
+  }
 }
 
 function shortParam(
@@ -133,7 +212,7 @@ function parseBracedParam(
   inner: string,
   pos: { offset: number; line: number; col: number },
   end: { offset: number; line: number; col: number },
-): TokenWordPart {
+): Extract<TokenWordPart, { type: "param" }> {
   let i = 0;
   let length = false;
   let excl = false;

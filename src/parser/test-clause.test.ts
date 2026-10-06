@@ -120,6 +120,20 @@ describe("TestClause structured AST", () => {
     });
   });
 
+  it("treats newlines as whitespace around operators", () => {
+    expect(testOf("[[\n!\na -eq b &&\n(c)\n]]").x).toMatchAst({
+      type: "BinaryTest",
+      op: "&&",
+      x: {
+        type: "BinaryTest",
+        op: "-eq",
+        x: { type: "UnaryTest", op: "!", x: litWord("a") },
+        y: litWord("b"),
+      },
+      y: { type: "ParenTest", x: litWord("c") },
+    });
+  });
+
   it("treats '#' as a literal inside [[ ]], not a comment", () => {
     expect(testOf("[[ a == #b ]]").x).toMatchAst({
       type: "BinaryTest",

@@ -49,4 +49,19 @@ describe("recoverErrors mode", () => {
     expect(result.errors?.[0]?.pos).toBeDefined();
     expect(result.errors?.[0]?.pos.line).toBeGreaterThan(0);
   });
+
+  it.each([
+    ["foo &&", "&&", 4, 5],
+    ["foo ||\n", "||", 4, 5],
+    ["foo | # comment\n", "|", 4, 5],
+  ] as const)(
+    "points an incomplete %s expression at its operator",
+    (source, operator, offset, col) => {
+      const result = parse(source, { recoverErrors: true, keepComments: true });
+      expect(result.errors?.[0]).toMatchObject({
+        message: expect.stringContaining(`after ${operator}`),
+        pos: { offset, line: 1, col },
+      });
+    },
+  );
 });

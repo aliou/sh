@@ -49,6 +49,16 @@ import { DECL_KEYWORDS } from "./constants";
 
 const ZERO_POS: Pos = { offset: 0, line: 1, col: 1 };
 
+class ParserSyntaxError extends Error {
+  constructor(
+    message: string,
+    readonly pos: Pos,
+  ) {
+    super(`${message} at ${pos.line}:${pos.col}`);
+    this.name = "ParserSyntaxError";
+  }
+}
+
 const TEST_UNARY_OPS = new Set<string>([
   "-e",
   "-f",
@@ -90,6 +100,12 @@ const TEST_BINARY_OPS = new Set<string>([
   "-ef",
   "-nt",
   "-ot",
+  "-eq",
+  "-ne",
+  "-le",
+  "-ge",
+  "-lt",
+  "-gt",
 ]);
 
 /**
@@ -227,7 +243,10 @@ export class Parser {
         const tok = this.tokens[before];
         errors.push({
           message: e instanceof Error ? e.message : String(e),
-          pos: tok?.pos ?? this.lastEnd() ?? startPos,
+          pos:
+            e instanceof ParserSyntaxError
+              ? e.pos
+              : (tok?.pos ?? this.lastEnd() ?? startPos),
         });
         // Advance past the offending token to avoid infinite looping.
         if (this.index === before) this.index += 1;
@@ -311,6 +330,12 @@ export class Parser {
         throw new Error("Expected logical operator");
       }
       this.skipOperatorContinuation();
+      if (this.isEof()) {
+        throw new ParserSyntaxError(
+          `Expected command after ${opToken.value}`,
+          opToken.pos,
+        );
+      }
       const rightCommand = this.parsePipeline();
       const left = this.wrapStatement(leftCommand);
       const right = this.wrapStatement(rightCommand);
@@ -334,8 +359,11 @@ export class Parser {
     const firstStmt = this.wrapStatement(first);
     const commands: Statement[] = [firstStmt];
     while (this.matchOp("|")) {
-      this.consume();
+      const opToken = this.consume();
       this.skipOperatorContinuation();
+      if (this.isEof()) {
+        throw new ParserSyntaxError("Expected command after |", opToken.pos);
+      }
       const next = this.parseCommandAtom();
       commands.push(this.wrapStatement(next));
     }
@@ -591,6 +619,7 @@ export class Parser {
       throw new Error("Expected loop variable name");
     }
     const name = tokenPartsText(nameToken.parts);
+    this.skipSeparators();
     const items = this.collectLoopItems();
     if (this.matchOp(";")) {
       this.consume();
@@ -616,11 +645,7 @@ export class Parser {
     if (token.type !== "arith-cmd") {
       throw new Error("Expected (( )) in c-style for");
     }
-    checkLang(this.options.dialect, startPos, "for ((", [
-      "bash",
-      "mksh",
-      "zsh",
-    ]);
+    checkLang(this.options.dialect, startPos, "for ((", ["bash", "zsh"]);
 
     // Split inner on `;` boundaries (top-level only) and parse each piece
     // as its own arithmetic expression. Empty clauses are allowed.
@@ -762,12 +787,14 @@ export class Parser {
       throw new Error("Expected case word");
     }
     const word = this.wordFromToken(wordToken);
+    this.skipSeparators();
     this.consumeKeyword("in");
     const items: CaseItem[] = [];
     this.skipSeparators();
     while (!this.matchKeyword("esac")) {
       const itemStart = this.peek()?.pos ?? head.pos;
       const patterns: Word[] = [];
+      if (this.matchSymbol("(")) this.consumeSymbol("(");
       while (!this.matchSymbol(")")) {
         if (this.matchWord()) {
           const patternToken = this.consume();
@@ -825,7 +852,9 @@ export class Parser {
   private parseTestClause(): TestClause {
     const open = this.consumeKeyword("[[");
     checkLang(this.options.dialect, open.pos, "[[", ["bash", "mksh", "zsh"]);
+    this.skipTestNewlines();
     const x = this.parseTestExpr(0);
+    this.skipTestNewlines();
     const close = this.consumeKeyword("]]");
     const node: TestClause = {
       type: "TestClause",
@@ -845,6 +874,7 @@ export class Parser {
       const prec = op === "||" ? 1 : op === "&&" ? 2 : 3;
       if (prec < minPrec) break;
       this.consumeTestOp(op);
+      this.skipTestNewlines();
       const right = this.parseTestExpr(prec + 1);
       left = {
         type: "BinaryTest",
@@ -862,6 +892,7 @@ export class Parser {
     // Negation
     if (this.matchOp("!")) {
       const op = this.consume();
+      this.skipTestNewlines();
       const x = this.parseTestPrimary();
       return {
         type: "UnaryTest",
@@ -874,7 +905,9 @@ export class Parser {
     // Parenthesized
     if (this.matchSymbol("(")) {
       const open = this.consumeSymbol("(");
+      this.skipTestNewlines();
       const x = this.parseTestExpr(0);
+      this.skipTestNewlines();
       const close = this.consumeSymbol(")");
       return { type: "ParenTest", x, pos: open.pos, end: close.end };
     }
@@ -1566,6 +1599,18 @@ export class Parser {
       }
       // Newline-derived `;` separators come from line breaks in the
       // continuation; a literal `;` carries no newline marker.
+      const token = this.peek();
+      if (token?.type === "op" && token.value === ";" && token.newline) {
+        this.consume();
+        continue;
+      }
+      break;
+    }
+  }
+
+  /** Newlines are whitespace inside `[[ ... ]]`; literal semicolons are not. */
+  private skipTestNewlines() {
+    while (true) {
       const token = this.peek();
       if (token?.type === "op" && token.value === ";" && token.newline) {
         this.consume();
