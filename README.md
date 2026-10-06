@@ -134,4 +134,6 @@ pnpm build       # rolldown + declarations
 
 ## License
 
-UNLICENSED
+MIT — see [LICENSE](./LICENSE). This project is a TypeScript port of
+[mvdan/sh](https://github.com/mvdan/sh) (BSD 3-Clause, © Daniel Martí);
+the original license is included in [LICENSE](./LICENSE).

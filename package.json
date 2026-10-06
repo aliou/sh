@@ -6,7 +6,7 @@
     "type": "git",
     "url": "https://github.com/aliou/sh.git"
   },
-  "license": "UNLICENSED",
+  "license": "MIT AND BSD-3-Clause",
   "publishConfig": {
     "access": "public"
   },
@@ -23,7 +23,8 @@
   },
   "files": [
     "dist",
-    "skills"
+    "skills",
+    "LICENSE"
   ],
   "scripts": {
     "format": "biome check --write",
