@@ -12,43 +12,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  publish:
-    name: Publish
+  release-pr:
+    name: Create release PR
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
       pull-requests: write
-      id-token: write
+    outputs:
+      has-changesets: ${{ steps.changesets.outputs.hasChangesets }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          # Build with the minimum supported Node so the published dist
-          # can't silently depend on a newer runtime.
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
-          scope: "@aliou"
           cache: "pnpm"
 
-      - name: Upgrade npm for stage publish support
-        run: npm install -g npm@latest
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build
-        run: pnpm build
+      # Changesets needs the repository's CLI, but release preparation does not
+      # need package lifecycle scripts to run with repository write access.
+      - name: Install release tooling
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Get release info
         id: release-info
@@ -81,9 +73,9 @@ jobs:
           rm -f release.json
         continue-on-error: true
 
-      - name: Create Release PR or Stage
+      - name: Create release PR
         id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1
         with:
           version: pnpm changeset version
           title: ${{ steps.release-info.outputs.title }}
@@ -91,9 +83,43 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  prepare-package:
+    name: Build package
+    needs: release-pr
+    if: needs.release-pr.outputs.has-changesets == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      needs-staging: ${{ steps.check-publish.outputs.needs_staging }}
+      version: ${{ steps.check-publish.outputs.version }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          # Build with the minimum supported Node so the published dist
+          # can't silently depend on a newer runtime.
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
       - name: Check for unpublished packages
         id: check-publish
-        if: steps.changesets.outputs.hasChangesets == 'false'
         run: |
           PACKAGE_NAME=$(node -p "require('./package.json').name")
           LOCAL_VERSION=$(node -p "require('./package.json').version")
@@ -105,18 +131,76 @@ jobs:
             echo "needs_staging=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Stage packages
+      - name: Pack package
+        id: pack
         if: steps.check-publish.outputs.needs_staging == 'true'
-        run: npm stage publish
+        run: |
+          mkdir package-artifact
+          pnpm pack --pack-destination package-artifact
+          TARBALL=$(find package-artifact -maxdepth 1 -type f -name '*.tgz' -print -quit)
+          test -n "$TARBALL"
+          echo "tarball=$(basename "$TARBALL")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload package
+        if: steps.check-publish.outputs.needs_staging == 'true'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: npm-package
+          path: package-artifact/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  stage-package:
+    name: Stage package on npm
+    needs: prepare-package
+    if: needs.prepare-package.outputs.needs-staging == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download package
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: npm-package
+          path: package-artifact
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          scope: "@aliou"
+
+      - name: Install npm with stage publish support
+        run: npm install -g npm@12.0.2 --ignore-scripts
+
+      - name: Stage package
         env:
           NPM_CONFIG_PROVENANCE: true
+        run: npm stage publish "package-artifact/${{ needs.prepare-package.outputs.tarball }}"
 
-      - name: Create GitHub releases
-        if: steps.check-publish.outputs.needs_staging == 'true'
+  github-release:
+    name: Create GitHub release
+    needs: [prepare-package, stage-package]
+    if: needs.stage-package.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare-package.outputs.version }}
         run: |
-          TAG="v${{ steps.check-publish.outputs.version }}"
+          TAG="v$VERSION"
           git tag "$TAG"
           git push origin "$TAG"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
