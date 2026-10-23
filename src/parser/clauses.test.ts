@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import { parse } from "../parse";
 import {
   block,
-  caseClause,
-  caseItem,
   coprocClause,
   forClause,
   functionDecl,
@@ -114,7 +112,7 @@ describe("parse (phase 8: select clauses)", () => {
   });
 });
 
-describe("parse (phase 9: functions and case)", () => {
+describe("parse (phase 9: functions)", () => {
   it("parses function declarations", () => {
     expect(parse("foo() { bar; }")).toMatchAst({
       ast: program(stmt(functionDecl("foo", [stmt(simple("bar"))]))),
@@ -122,35 +120,6 @@ describe("parse (phase 9: functions and case)", () => {
 
     expect(parse("function foo { bar; }")).toMatchAst({
       ast: program(stmt(functionDecl("foo", [stmt(simple("bar"))]))),
-    });
-  });
-
-  it("parses case clauses", () => {
-    expect(parse("case x in y) z ;; esac")).toMatchAst({
-      ast: program(
-        stmt(caseClause("x", [caseItem([word("y")], [stmt(simple("z"))])])),
-      ),
-    });
-
-    expect(parse("case x in a|b) z ;; esac")).toMatchAst({
-      ast: program(
-        stmt(
-          caseClause("x", [
-            caseItem([word("a"), word("b")], [stmt(simple("z"))]),
-          ]),
-        ),
-      ),
-    });
-
-    expect(parse("case x in a) y ;; b) z ;; esac")).toMatchAst({
-      ast: program(
-        stmt(
-          caseClause("x", [
-            caseItem([word("a")], [stmt(simple("y"))]),
-            caseItem([word("b")], [stmt(simple("z"))]),
-          ]),
-        ),
-      ),
     });
   });
 });

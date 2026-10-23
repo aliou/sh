@@ -214,15 +214,26 @@ describe("parse (phase 1: simple commands)", () => {
   });
 
   it("rejects && with no right-hand side", () => {
+    // Missing continuations name the operator at its position: after a
+    // comment, after a newline, and at plain EOF (matching mvdan/sh).
     expect(() => parse("foo && # comment")).toThrowError(
-      "Expected a command word",
+      "`&&` must be followed by a statement",
     );
-
-    expect(() => parse("foo &&")).toThrowError("Expected a command word");
+    expect(() => parse("foo &&\n")).toThrowError(
+      "`&&` must be followed by a statement",
+    );
+    expect(() => parse("foo &&")).toThrowError(
+      "`&&` must be followed by a statement",
+    );
+    expect(() => parse("foo |")).toThrowError(
+      "`|` must be followed by a statement",
+    );
   });
 
   it("rejects a literal ; after an operator", () => {
-    expect(() => parse("foo && ; bar")).toThrowError("Expected a command word");
+    expect(() => parse("foo && ; bar")).toThrowError(
+      "`&&` must be followed by a statement",
+    );
   });
 
   it("rejects an operator continuation inside groups and blocks", () => {

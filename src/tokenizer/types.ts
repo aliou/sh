@@ -45,13 +45,8 @@ export type TokenWordPart =
 
 export type Token =
   | (WithPos & { type: "word"; parts: TokenWordPart[] })
-  | (WithPos & {
-      type: "op";
-      value: OpTokenValue;
-      /** True when this token was emitted from a newline rather than a
-       * literal `;` in the source. Only set for `;` separators. */
-      newline?: boolean;
-    })
+  | (WithPos & { type: "op"; value: OpTokenValue })
+  | (WithPos & { type: "newline" })
   | (WithPos & { type: "redir"; op: RedirOp; fd?: string })
   | (WithPos & { type: "symbol"; value: SymbolTokenValue })
   | (WithPos & { type: "arith-cmd"; expr: string; innerOffset: number })
