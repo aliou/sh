@@ -34,7 +34,7 @@ import {
   type Word,
   type WordPart,
 } from "../ast";
-import { parseArithmetic } from "../parser/arith-parser";
+import { parseArithmetic } from "../parser";
 
 type ParamOp = NonNullable<ParamExp["exp"]>["op"];
 
