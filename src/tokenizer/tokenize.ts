@@ -40,7 +40,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
   const canStartTestClause = (): boolean => {
     const prev = tokens[tokens.length - 1];
     if (!prev) return true;
-    if (prev.type === "op") return true;
+    if (prev.type === "op" || prev.type === "newline") return true;
     if (prev.type === "symbol" && (prev.value === "(" || prev.value === "{")) {
       return true;
     }
@@ -97,9 +97,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
 
     if (ch === "\n") {
       tokens.push({
-        type: "op",
-        value: ";",
-        newline: true,
+        type: "newline",
         pos: map.posAt(i),
         end: map.posAt(i + 1),
       });
@@ -147,9 +145,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
 
       if (delimiterNewline >= 0) {
         tokens.push({
-          type: "op",
-          value: ";",
-          newline: true,
+          type: "newline",
           pos: map.posAt(delimiterNewline),
           end: map.posAt(delimiterNewline + 1),
         });

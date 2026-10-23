@@ -1,0 +1,5 @@
+---
+"@aliou/sh": patch
+---
+
+Tokenize newlines as first-class tokens and make separator handling match bash. The tokenizer now emits a `newline` token instead of smuggling line breaks as `op ";"` tokens, and one parameterized skip helper replaces the three separator-skipping loops. As a result the parser now rejects inputs bash rejects — `foo; ; bar`, `foo\n; bar`, `;;` outside `case`, `;` after `&`, a stray `;` where a statement or loop condition was expected — and accepts linebreak positions bash allows, such as `! # c\nfoo` and `x() # c\n{ foo; }`. Missing operator continuations (`foo && # c`, `foo && ; bar`, `foo &&` at EOF) now report `` `&&` must be followed by a statement `` anchored at the operator's position, matching mvdan/sh, instead of a deep "Expected a command word". The parser was also split into focused modules under `src/parser/` (clauses, iterators, case, decl-let, test-clause, redirects, commands, words, and a shared parser-state module); behavior is unchanged apart from the fixes above.
