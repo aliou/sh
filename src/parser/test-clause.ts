@@ -125,7 +125,7 @@ function parseTestPrimary(s: ParserState): TestExpr {
   if (s.matchWord()) {
     const tok = s.consume();
     if (tok.type !== "word") throw new Error("expected word in [[ ]]");
-    return wordFromToken(tok);
+    return wordFromToken(tok, s.options);
   }
   throw new Error("Expected expression inside [[ ]]");
 }

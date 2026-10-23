@@ -22,10 +22,51 @@ import { wordFromToken } from "./words";
 /**
  * Parse a standalone inner program — the body of a command or process
  * substitution found inside a word. Used by the word-conversion module.
+ *
+ * Only the outer parse's zsh-ness is honored: inner programs have always
+ * been parsed with bash-effective dialect checks, and zsh's lax
+ * separators must carry over (`$(foo; ; bar)` is valid zsh). `base` is
+ * where `source` starts in the outer source; positions carried by errors
+ * thrown from the inner program are rebased to outer coordinates so
+ * `recoverErrors` reports real positions.
  */
-export function parseInnerProgram(source: string): Program {
-  const innerParser = new Parser(tokenize(source));
-  return innerParser.parseProgram();
+export function parseInnerProgram(
+  source: string,
+  options?: ParseOptions,
+  base?: Pos,
+): Program {
+  const inner: ParseOptions | undefined = isZsh(options?.dialect)
+    ? { dialect: "zsh" }
+    : undefined;
+  const innerParser = new Parser(tokenize(source), inner);
+  try {
+    return innerParser.parseProgram();
+  } catch (e) {
+    if (e instanceof PositionedError && base) {
+      throw new PositionedError(e.message, rebasePosition(e.position, base));
+    }
+    throw e;
+  }
+}
+
+/**
+ * Translate a position from inner-source coordinates to outer ones. The
+ * inner source's first line continues the line `base` sits on, so line 1
+ * extends `base`'s column and later lines start fresh.
+ */
+function rebasePosition(p: Pos, base: Pos): Pos {
+  if (p.line === 1) {
+    return {
+      offset: base.offset + p.offset,
+      line: base.line,
+      col: base.col + p.col - 1,
+    };
+  }
+  return {
+    offset: base.offset + p.offset,
+    line: base.line + p.line - 1,
+    col: p.col,
+  };
 }
 
 export class Parser {
@@ -64,7 +105,7 @@ export class Parser {
         continue;
       }
       this.state.consume();
-      yield wordFromToken(tok);
+      yield wordFromToken(tok, this.state.options);
     }
   }
 

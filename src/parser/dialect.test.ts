@@ -131,3 +131,15 @@ describe("dialect enforcement: bash (default) accepts everything", () => {
     expect(() => parse("ls @(foo)", { dialect: "bash" })).not.toThrow();
   });
 });
+
+describe("dialect enforcement: inner programs inherit zsh laxness", () => {
+  it("accepts zsh-lax separators inside $(...)", () => {
+    expect(() => parse("echo $(foo; ; bar)", { dialect: "zsh" })).not.toThrow();
+    expect(() => parse("echo $(; foo)", { dialect: "zsh" })).not.toThrow();
+  });
+
+  it("rejects them in bash", () => {
+    expect(() => parse("echo $(foo; ; bar)")).toThrow();
+    expect(() => parse("echo $(; foo)")).toThrow();
+  });
+});

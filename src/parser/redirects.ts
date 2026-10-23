@@ -18,7 +18,7 @@ export function parseRedirect(s: ParserState): Redirect {
   if (targetToken.type !== "word") {
     throw new Error("Redirect must be followed by a word");
   }
-  const target = wordFromToken(targetToken);
+  const target = wordFromToken(targetToken, s.options);
   const redirect: Redirect = token.fd
     ? {
         type: "Redirect",
