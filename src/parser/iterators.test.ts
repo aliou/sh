@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SimpleCommand } from "../ast";
+import { parse } from "../parse";
 import { parseStmtsSeq, parseWordsSeq } from "../seq";
 
 describe("parseStmtsSeq", () => {
@@ -52,5 +53,24 @@ describe("parseWordsSeq", () => {
 
   it("ignores trailing newlines", () => {
     expect([...parseWordsSeq("foo\n")]).toHaveLength(1);
+  });
+});
+
+describe("parse (loop head separators, zsh laxness)", () => {
+  it("accepts doubled ; before do in zsh", () => {
+    expect(() =>
+      parse("for i in a b; ; do foo; done", { dialect: "zsh" }),
+    ).not.toThrow();
+    expect(() =>
+      parse("select x in a b; ; do foo; done", { dialect: "zsh" }),
+    ).not.toThrow();
+    expect(() =>
+      parse("for ((i=0;i<3;i++)); ; do foo; done", { dialect: "zsh" }),
+    ).not.toThrow();
+  });
+
+  it("rejects doubled ; before do in bash", () => {
+    expect(() => parse("for i in a b; ; do foo; done")).toThrow();
+    expect(() => parse("for i in a b\n; do foo; done")).toThrow();
   });
 });

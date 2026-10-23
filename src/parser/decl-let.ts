@@ -53,7 +53,7 @@ export function parseDeclClause(s: ParserState): DeclClause {
       }
 
       s.consume();
-      args.push(wordFromToken(token));
+      args.push(wordFromToken(token, s.options));
       continue;
     }
 
@@ -89,7 +89,7 @@ export function parseLetClause(s: ParserState): LetClause {
     if (s.matchWord()) {
       const token = s.consume();
       if (token.type !== "word") break;
-      exprs.push(wordFromToken(token));
+      exprs.push(wordFromToken(token, s.options));
       continue;
     }
 

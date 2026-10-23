@@ -1,7 +1,29 @@
-import type { ParamExp, ParamExpOp, Word, WordPart } from "../ast";
+import type {
+  ParamExp,
+  ParamExpOp,
+  ParseOptions,
+  Pos,
+  Word,
+  WordPart,
+} from "../ast";
 import type { Token, TokenWordPart } from "../tokenizer";
 import { parseArithmetic } from "./arith-parser";
 import { parseInnerProgram } from "./parser";
+
+/**
+ * Where an inner program's source (command/process substitution,
+ * backticks) starts in the outer source, so errors raised while parsing
+ * it can be rebased to outer coordinates. The part's `innerOffset` is
+ * absolute, and the opening prefix (`$(`, `>(`, `` ` ``) contains no
+ * newline, so the inner start shares the part's line.
+ */
+function innerBase(part: TokenWordPart & { innerOffset: number }): Pos {
+  return {
+    offset: part.innerOffset,
+    line: part.pos.line,
+    col: part.pos.col + (part.innerOffset - part.pos.offset),
+  };
+}
 
 /**
  * Wrap a raw substring (e.g. a slice offset or a replacement pattern) as a
@@ -13,7 +35,10 @@ export function strToWord(value: string): Word {
 }
 
 /** Convert one tokenizer word part into its AST counterpart. */
-export function convertWordPart(part: TokenWordPart): WordPart {
+export function convertWordPart(
+  part: TokenWordPart,
+  options?: ParseOptions,
+): WordPart {
   switch (part.type) {
     case "lit":
       return {
@@ -32,14 +57,14 @@ export function convertWordPart(part: TokenWordPart): WordPart {
     case "dbl":
       return {
         type: "DblQuoted",
-        parts: part.parts.map((p) => convertWordPart(p)),
+        parts: part.parts.map((p) => convertWordPart(p, options)),
         pos: part.pos,
         end: part.end,
       };
     case "param":
       return convertParamExp(part);
     case "cmd-subst": {
-      const prog = parseInnerProgram(part.raw);
+      const prog = parseInnerProgram(part.raw, options, innerBase(part));
       return {
         type: "CmdSubst",
         stmts: prog.body,
@@ -64,7 +89,7 @@ export function convertWordPart(part: TokenWordPart): WordPart {
       };
     }
     case "proc-subst": {
-      const prog = parseInnerProgram(part.raw);
+      const prog = parseInnerProgram(part.raw, options, innerBase(part));
       return {
         type: "ProcSubst",
         op: part.op,
@@ -74,7 +99,7 @@ export function convertWordPart(part: TokenWordPart): WordPart {
       };
     }
     case "backtick": {
-      const prog = parseInnerProgram(part.raw);
+      const prog = parseInnerProgram(part.raw, options, innerBase(part));
       return {
         type: "CmdSubst",
         stmts: prog.body,
@@ -138,11 +163,18 @@ export function convertParamExp(
   return out;
 }
 
-/** Convert a tokenizer word token into a Word AST node. */
-export function wordFromToken(token: Token & { type: "word" }): Word {
+/**
+ * Convert a tokenizer word token into a Word AST node. `options` is
+ * threaded through so inner programs (command substitutions, ...) are
+ * parsed with the outer dialect's separator laxness.
+ */
+export function wordFromToken(
+  token: Token & { type: "word" },
+  options?: ParseOptions,
+): Word {
   return {
     type: "Word",
-    parts: token.parts.map((part) => convertWordPart(part)),
+    parts: token.parts.map((part) => convertWordPart(part, options)),
     pos: token.pos,
     end: token.end,
   };
