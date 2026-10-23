@@ -1,5 +1,5 @@
 import type { CStyleLoop, ForClause, Pos, SelectClause, Word } from "../ast";
-import { checkLang } from "../dialect";
+import { checkLang, isZsh } from "../dialect";
 import { tokenPartsText } from "../tokenizer";
 import { SourceMap } from "../tokenizer/cursor";
 import { parseArithmetic } from "./arith-parser";
@@ -49,7 +49,7 @@ function collectLoopItems(s: ParserState): Word[] | undefined {
   while (s.matchWord() && !s.matchKeyword("do")) {
     const tok = s.consume();
     if (tok.type !== "word") throw new Error("Expected loop item word");
-    items.push(wordFromToken(tok));
+    items.push(wordFromToken(tok, s.options));
   }
   return items.length > 0 ? items : undefined;
 }
@@ -72,7 +72,8 @@ export function parseForOrCStyleLoop(s: ParserState): ForClause | CStyleLoop {
   if (matchSeparator(s)) {
     s.consume();
   }
-  s.skipSeparators();
+  // zsh tolerates any run of separators before `do` (`for i in a b; ; do`).
+  s.skipSeparators({ semicolon: isZsh(s.options.dialect) });
   s.consumeKeyword("do");
   const body = parseStatementsUntilKeyword(s, "do", ["done"]);
   const done = s.consumeKeyword("done");
@@ -126,7 +127,8 @@ export function parseCStyleLoop(s: ParserState, startPos: Pos): CStyleLoop {
   if (matchSeparator(s)) {
     s.consume();
   }
-  s.skipSeparators();
+  // zsh tolerates any run of separators before `do` (`for i in a b; ; do`).
+  s.skipSeparators({ semicolon: isZsh(s.options.dialect) });
   s.consumeKeyword("do");
   const body = parseStatementsUntilKeyword(s, "do", ["done"]);
   const done = s.consumeKeyword("done");
@@ -161,7 +163,7 @@ export function parseSelectClause(s: ParserState): SelectClause {
       if (itemToken.type !== "word") {
         throw new Error("Expected select item word");
       }
-      collected.push(wordFromToken(itemToken));
+      collected.push(wordFromToken(itemToken, s.options));
     }
     if (collected.length > 0) {
       items = collected;
@@ -170,7 +172,8 @@ export function parseSelectClause(s: ParserState): SelectClause {
   if (matchSeparator(s)) {
     s.consume();
   }
-  s.skipSeparators();
+  // zsh tolerates any run of separators before `do` (`for i in a b; ; do`).
+  s.skipSeparators({ semicolon: isZsh(s.options.dialect) });
   s.consumeKeyword("do");
   const body = parseStatementsUntilKeyword(s, "do", ["done"]);
   const done = s.consumeKeyword("done");

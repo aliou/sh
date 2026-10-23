@@ -16,7 +16,7 @@ import { checkLang, isZsh } from "../dialect";
 import type { Token } from "../tokenizer";
 import { tokenPartsText } from "../tokenizer";
 import { parseArithmetic } from "./arith-parser";
-import { parseCaseClause } from "./case";
+import { isCaseItemEnd, parseCaseClause } from "./case";
 import {
   parseBlock,
   parseIfClause,
@@ -62,8 +62,9 @@ export function parseStatement(s: ParserState): Statement {
   if (s.matchOp("&")) {
     s.consume();
     background = true;
-    if (s.matchOp(";") && !isZsh(s.options.dialect)) {
-      // bash rejects `foo & ; bar`; only newlines may follow `&`.
+    if (s.matchOp(";") && !isCaseItemEnd(s) && !isZsh(s.options.dialect)) {
+      // bash rejects `foo & ; bar`: only newlines may follow `&`. The
+      // first `;` of a `;;` case terminator is fine (`foo & ;; esac`).
       throw new Error("`&` cannot be followed by `;`");
     }
   }
@@ -378,7 +379,7 @@ export function parseSimpleCommand(s: ParserState): SimpleCommand {
 
       s.consume();
       sawWord = true;
-      words.push(wordFromToken(token));
+      words.push(wordFromToken(token, s.options));
       continue;
     }
 
@@ -496,7 +497,12 @@ function parseArrayAssignment(
       throw new Error("Unclosed array expression");
     }
     // Newlines and comments may separate array elements; a literal `;`
-    // is not a separator inside an array (bash rejects `a=(1;2)`).
+    // is not a separator inside an array (bash rejects `a=(1;2)`), but
+    // zsh tolerates it.
+    if (s.matchOp(";") && isZsh(s.options.dialect)) {
+      s.consume();
+      continue;
+    }
     if (s.matchNewline()) {
       s.consume();
       continue;
@@ -537,7 +543,7 @@ function parseArrayAssignment(
     } else {
       elems.push({
         type: "ArrayElem",
-        value: wordFromToken(token),
+        value: wordFromToken(token, s.options),
         pos: token.pos,
         end: token.end,
       });

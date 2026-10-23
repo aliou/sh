@@ -326,3 +326,16 @@ describe("parse (phase 26: let clause)", () => {
     });
   });
 });
+
+describe("parse (array separators, zsh laxness)", () => {
+  it("accepts ; inside arrays in zsh", () => {
+    expect(() => parse("a=(1;2)", { dialect: "zsh" })).not.toThrow();
+    expect(() => parse("a=( ; )", { dialect: "zsh" })).not.toThrow();
+  });
+
+  it("rejects ; inside arrays in bash", () => {
+    expect(() => parse("a=(1;2)")).toThrowError(
+      "Expected word in array expression",
+    );
+  });
+});

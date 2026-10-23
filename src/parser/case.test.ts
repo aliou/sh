@@ -73,4 +73,33 @@ describe("parse (case clauses)", () => {
     // bash: `case x in a) foo; ; bar;; esac` is a syntax error.
     expect(() => parse("case x in a) foo; ; bar;; esac")).toThrow();
   });
+
+  it("allows & before the ;; terminator (bash parity)", () => {
+    expect(() => parse("case x in a) foo & ;; esac")).not.toThrow();
+    expect(() => parse("case x in a) foo &;; esac")).not.toThrow();
+    expect(() =>
+      parse("case x in a) foo && bar & ;; b) x;; esac"),
+    ).not.toThrow();
+    expect(() => parse("case x in a) foo &\n;; esac")).not.toThrow();
+  });
+
+  it("rejects a ; after a newline inside a case body (bash parity)", () => {
+    expect(() => parse("case x in a) foo\n; bar;; esac")).toThrow();
+  });
+
+  it("rejects a leading or doubled ; in a case body (bash parity)", () => {
+    // bash: `a) ; foo;;` and `foo ; ; esac` are syntax errors; `;;` is a
+    // single token, so a space between the two `;`s breaks it apart.
+    expect(() => parse("case x in a) ; foo;; esac")).toThrow();
+    expect(() => parse("case x in a) foo ; ; esac")).toThrow();
+    expect(() => parse("case x in a) foo;;; esac")).toThrow();
+  });
+
+  it("keeps zsh's lax case separators", () => {
+    const zsh = { dialect: "zsh" } as const;
+    expect(() => parse("case x in a) foo\n; bar;; esac", zsh)).not.toThrow();
+    expect(() => parse("case x in a) foo;;; esac", zsh)).not.toThrow();
+    expect(() => parse("case x in a) foo ; ; esac", zsh)).not.toThrow();
+    expect(() => parse("case x in a) ; foo;; esac", zsh)).not.toThrow();
+  });
 });

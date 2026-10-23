@@ -1,4 +1,5 @@
 import type { CaseClause, CaseItem, Statement, Word } from "../ast";
+import { isZsh } from "../dialect";
 import { parseStatement } from "./commands";
 import {
   allowNestedTrailingRedirects,
@@ -14,10 +15,10 @@ export function parseCaseClause(s: ParserState): CaseClause {
   if (wordToken.type !== "word") {
     throw new Error("Expected case word");
   }
-  const word = wordFromToken(wordToken);
+  const word = wordFromToken(wordToken, s.options);
   s.consumeKeyword("in");
   const items: CaseItem[] = [];
-  s.skipSeparators();
+  s.skipSeparators({ semicolon: isZsh(s.options.dialect) });
   while (!s.matchKeyword("esac")) {
     const itemStart = s.peek()?.pos ?? head.pos;
     const patterns: Word[] = [];
@@ -27,7 +28,7 @@ export function parseCaseClause(s: ParserState): CaseClause {
         if (patternToken.type !== "word") {
           throw new Error("Expected case pattern");
         }
-        patterns.push(wordFromToken(patternToken));
+        patterns.push(wordFromToken(patternToken, s.options));
         continue;
       }
       if (s.matchOp("|")) {
@@ -46,11 +47,11 @@ export function parseCaseClause(s: ParserState): CaseClause {
       pos: itemStart,
       end: itemEnd,
     });
-    if (s.matchOp(";") && s.peekOp(";")) {
+    if (isCaseItemEnd(s)) {
       s.consume();
       s.consume();
     }
-    s.skipSeparators();
+    s.skipSeparators({ semicolon: isZsh(s.options.dialect) });
   }
   const esac = s.consumeKeyword("esac");
   const node: CaseClause = {
@@ -68,21 +69,55 @@ export function parseCaseClause(s: ParserState): CaseClause {
 function parseCaseItemBody(s: ParserState): Statement[] {
   return allowNestedTrailingRedirects(s, () => {
     const body: Statement[] = [];
-    // Inside a case item body a single `;` separates statements, but `;;`
-    // is the item terminator, so only "single" semicolons are skipped.
-    s.skipSeparators({ semicolon: "single" });
+    // Leading separators: newlines and comments (zsh also tolerates `;`).
+    s.skipSeparators({
+      semicolon: isZsh(s.options.dialect) ? "single" : false,
+    });
     while (!s.matchKeyword("esac") && !isCaseItemEnd(s)) {
       body.push(parseStatement(s));
       if (isCaseItemEnd(s)) {
         break;
       }
-      s.skipSeparators({ semicolon: "single" });
+      skipCaseStatementSeparators(s);
     }
     return body;
   });
 }
 
-/** Whether the cursor sits on a `;;` case-item terminator. */
+/**
+ * Skip the separators between the statements of one case item body.
+ *
+ * Like statement lists, a literal `;` only counts immediately after the
+ * statement it ends: a `;` after a newline (or a doubled `; ;`) is left
+ * for the next parseStatement to fail on, matching bash. The `;;` item
+ * terminator is never consumed here. zsh is lax and keeps the
+ * token-stream behavior the parser had before newline tokens existed.
+ */
+function skipCaseStatementSeparators(s: ParserState): void {
+  if (isZsh(s.options.dialect)) {
+    s.skipSeparators({ semicolon: "single" });
+    return;
+  }
+  if (s.matchOp(";") && !isCaseItemEnd(s)) {
+    s.consume();
+  }
+  s.skipSeparators();
+}
+
+/**
+ * Whether the cursor sits on a `;;` case-item terminator. In bash, `;;`
+ * is a single token: a space between the two `;`s makes them two
+ * separate separators (an error) instead of a terminator. zsh accepts
+ * either form, so it keeps the plain token-stream check.
+ */
 export function isCaseItemEnd(s: ParserState): boolean {
-  return s.matchOp(";") && s.peekOp(";");
+  if (!s.matchOp(";") || !s.peekOp(";")) return false;
+  if (isZsh(s.options.dialect)) return true;
+  const tok = s.peek();
+  const next = s.peekToken(1);
+  return (
+    tok?.type === "op" &&
+    next?.type === "op" &&
+    next.pos.offset === tok.end.offset
+  );
 }

@@ -43,6 +43,9 @@ describe("parseStatement", () => {
     expect(() => parse("foo & ; bar")).toThrowError(
       "`&` cannot be followed by `;`",
     );
+    // ...but the ;; case terminator is fine, and zsh allows both.
+    expect(() => parse("case x in a) foo & ;; esac")).not.toThrow();
+    expect(() => parse("foo & ; bar", { dialect: "zsh" })).not.toThrow();
   });
 });
 
