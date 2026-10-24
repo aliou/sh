@@ -54,7 +54,6 @@ function collectLoopItems(s: ParserState): Word[] | undefined {
   return items.length > 0 ? items : undefined;
 }
 
-/** Parse a `for` clause: either `for name in words` or the C-style form. */
 export function parseForOrCStyleLoop(s: ParserState): ForClause | CStyleLoop {
   const forTok = s.consumeKeyword("for");
 
@@ -72,7 +71,6 @@ export function parseForOrCStyleLoop(s: ParserState): ForClause | CStyleLoop {
   if (matchSeparator(s)) {
     s.consume();
   }
-  // zsh tolerates any run of separators before `do` (`for i in a b; ; do`).
   s.skipSeparators({ semicolon: isZsh(s.options.dialect) });
   s.consumeKeyword("do");
   const body = parseStatementsUntilKeyword(s, "do", ["done"]);
@@ -89,7 +87,6 @@ export function parseForOrCStyleLoop(s: ParserState): ForClause | CStyleLoop {
   return node;
 }
 
-/** Parse a C-style `for (( init; cond; post ))` loop. */
 export function parseCStyleLoop(s: ParserState, startPos: Pos): CStyleLoop {
   const token = s.consume();
   if (token.type !== "arith-cmd") {
@@ -127,7 +124,6 @@ export function parseCStyleLoop(s: ParserState, startPos: Pos): CStyleLoop {
   if (matchSeparator(s)) {
     s.consume();
   }
-  // zsh tolerates any run of separators before `do` (`for i in a b; ; do`).
   s.skipSeparators({ semicolon: isZsh(s.options.dialect) });
   s.consumeKeyword("do");
   const body = parseStatementsUntilKeyword(s, "do", ["done"]);
@@ -145,7 +141,6 @@ export function parseCStyleLoop(s: ParserState, startPos: Pos): CStyleLoop {
   return loop;
 }
 
-/** Parse a `select` clause. */
 export function parseSelectClause(s: ParserState): SelectClause {
   const head = s.consumeKeyword("select");
   checkLang(s.options.dialect, head.pos, "select", ["bash", "mksh", "zsh"]);
@@ -172,7 +167,6 @@ export function parseSelectClause(s: ParserState): SelectClause {
   if (matchSeparator(s)) {
     s.consume();
   }
-  // zsh tolerates any run of separators before `do` (`for i in a b; ; do`).
   s.skipSeparators({ semicolon: isZsh(s.options.dialect) });
   s.consumeKeyword("do");
   const body = parseStatementsUntilKeyword(s, "do", ["done"]);

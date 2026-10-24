@@ -34,7 +34,6 @@ import { type ParserState, PositionedError, ZERO_POS } from "./state";
 import { parseTestClause } from "./test-clause";
 import { wordFromToken } from "./words";
 
-/** Wrap a command node in a Statement. */
 export function wrapStatement(command: Command): Statement {
   return {
     type: "Statement",
@@ -44,16 +43,12 @@ export function wrapStatement(command: Command): Statement {
   };
 }
 
-/** Parse one statement: optional `!` negation, a pipeline chain, and an
- * optional `&` background marker. */
 export function parseStatement(s: ParserState): Statement {
   const startTok = s.peek();
   const startPos = startTok?.pos ?? ZERO_POS;
   let negated = false;
   if (s.matchOp("!")) {
     s.consume();
-    // Newlines and comments may follow the negation (`! # c\nfoo`),
-    // matching bash.
     s.skipSeparators();
     negated = true;
   }
@@ -63,8 +58,6 @@ export function parseStatement(s: ParserState): Statement {
     s.consume();
     background = true;
     if (s.matchOp(";") && !isCaseItemEnd(s) && !isZsh(s.options.dialect)) {
-      // bash rejects `foo & ; bar`: only newlines may follow `&`. The
-      // first `;` of a `;;` case terminator is fine (`foo & ;; esac`).
       throw new Error("`&` cannot be followed by `;`");
     }
   }
@@ -84,7 +77,6 @@ export function parseStatement(s: ParserState): Statement {
   return statement;
 }
 
-/** Parse `&&` / `||` chains of pipelines. */
 export function parseLogical(s: ParserState): Command {
   let leftCommand = parsePipeline(s);
   while (s.matchOp("&&") || s.matchOp("||")) {
@@ -109,7 +101,6 @@ export function parseLogical(s: ParserState): Command {
   return leftCommand;
 }
 
-/** Parse `|` chains of command atoms. */
 export function parsePipeline(s: ParserState): Command {
   const first = parseCommandAtom(s);
   if (!s.matchOp("|")) {
@@ -136,34 +127,17 @@ export function parsePipeline(s: ParserState): Command {
   };
 }
 
-/**
- * Parse the statement that must follow a binary operator (`&&`, `||`,
- * `|`), and anchor its failure at the operator.
- *
- * When the continuation cannot produce any statement at all — EOF, a
- * comment or newline skipped after the operator, or a non-statement
- * token such as a literal `;` blocking it — the deep "Expected a command
- * word" is replaced by `` `&&` must be followed by a statement ``
- * positioned at the operator, matching mvdan/sh. Failures after the
- * continuation has started (a partially-parsed statement) are re-thrown
- * unchanged, so deeper errors keep their own messages and positions.
- * See aliou/sh#25.
- */
 function parseContinuationCommand(
   s: ParserState,
   opToken: Token & { type: "op" },
   parse: () => Command,
 ): Command {
-  // Comments and newlines are legal here (`cmd && # note\nnext`); a
-  // literal `;` is not (`cmd && ; next` stays an error).
   s.skipSeparators({ semicolon: false });
   const afterSkip = s.index;
   try {
     return parse();
   } catch (e) {
     if (e instanceof Error && s.index === afterSkip) {
-      // Zero tokens consumed: the operator is missing its right-hand
-      // side, so the failure is the operator's, not the statement's.
       throw new PositionedError(
         `\`${opToken.value}\` must be followed by a statement`,
         opToken.pos,
@@ -173,7 +147,6 @@ function parseContinuationCommand(
   }
 }
 
-/** Dispatch on the first token to the right command production. */
 export function parseCommandAtom(s: ParserState): Command {
   if (s.matchKeyword("if")) {
     return parseIfClause(s);
@@ -223,7 +196,6 @@ export function parseCommandAtom(s: ParserState): Command {
   return parseSimpleCommand(s);
 }
 
-/** Parse an arithmetic command `(( ... ))`. */
 function consumeArithCmd(s: ParserState): ArithCmd {
   const token = s.consume();
   if (token.type !== "arith-cmd")
@@ -243,7 +215,6 @@ function consumeArithCmd(s: ParserState): ArithCmd {
   return cmd;
 }
 
-/** Parse a `time` clause. */
 function parseTimeClause(s: ParserState): TimeClause {
   const head = s.consumeKeyword("time");
   const command = parseStatement(s);
@@ -255,7 +226,6 @@ function parseTimeClause(s: ParserState): TimeClause {
   };
 }
 
-/** Parse a `coproc` clause, with or without an explicit name. */
 function parseCoprocClause(s: ParserState): CoprocClause {
   const head = s.consumeKeyword("coproc");
   checkLang(s.options.dialect, head.pos, "coproc", ["bash", "zsh"]);
@@ -291,11 +261,6 @@ function parseCoprocClause(s: ParserState): CoprocClause {
   return node;
 }
 
-/**
- * Whether the cursor is on a function declaration in the `name() { ... }`
- * form. Comments and newlines may sit between the `()` and the body block
- * (`x() # c\n{ ... }`); anything else means this is not a declaration.
- */
 function looksLikeFuncDecl(s: ParserState): boolean {
   const name = s.peek();
   const next = s.peekToken(1);
@@ -317,7 +282,6 @@ function looksLikeFuncDecl(s: ParserState): boolean {
   }
 }
 
-/** Parse a function declaration (both `function name` and `name()` forms). */
 function parseFunctionDecl(s: ParserState): FunctionDecl {
   let startPos: Pos | undefined;
   if (s.matchKeyword("function")) {
@@ -335,7 +299,6 @@ function parseFunctionDecl(s: ParserState): FunctionDecl {
     s.consumeSymbol("(");
     s.consumeSymbol(")");
   }
-  // Comments and newlines may precede the body block (`x() # c\n{ ... }`).
   s.skipSeparators();
   if (s.matchSymbol("{")) {
     // Redirects after the body block belong to the FunctionDecl, not the
@@ -354,7 +317,6 @@ function parseFunctionDecl(s: ParserState): FunctionDecl {
   throw new Error("Expected function body block");
 }
 
-/** Parse a simple command: words, assignments, and redirects. */
 export function parseSimpleCommand(s: ParserState): SimpleCommand {
   const startPos = s.peek()?.pos ?? ZERO_POS;
   const words: Word[] = [];
@@ -482,7 +444,6 @@ export function tryParseAssignment(
   return assignment;
 }
 
-/** Parse an array assignment value `name=( elem ... )`. */
 function parseArrayAssignment(
   s: ParserState,
   name: string,
@@ -496,9 +457,6 @@ function parseArrayAssignment(
     if (s.isEof()) {
       throw new Error("Unclosed array expression");
     }
-    // Newlines and comments may separate array elements; a literal `;`
-    // is not a separator inside an array (bash rejects `a=(1;2)`), but
-    // zsh tolerates it.
     if (s.matchOp(";") && isZsh(s.options.dialect)) {
       s.consume();
       continue;

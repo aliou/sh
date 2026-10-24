@@ -3,11 +3,6 @@ import { describe, expect, it } from "vitest";
 import { tokenize } from "../tokenizer";
 import { wordFromToken } from "./words";
 
-/**
- * Unit tests for the word-conversion module: tokenizer word parts to AST
- * word parts. The behavioral quoting/expansion suites live in
- * words-quotes-comments.test.ts, expansions.test.ts and param-exp.test.ts.
- */
 function firstWord(source: string) {
   const tokens = tokenize(source);
   const first = tokens[0];

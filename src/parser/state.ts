@@ -4,15 +4,8 @@ import type { OpTokenValue, SymbolTokenValue, Token } from "../tokenizer";
 import { tokenPartsText } from "../tokenizer";
 import { drainPendingHeredocs } from "./redirects";
 
-/** Position used for nodes built without a known source position. */
 export const ZERO_POS: Pos = { offset: 0, line: 1, col: 1 };
 
-/**
- * Error thrown by the parser that carries the source position it should
- * be reported at, which may differ from wherever the parser happened to
- * fail — e.g. an operator continuation failure points at the operator
- * (`&&`), not at the missing statement after it.
- */
 export class PositionedError extends Error {
   constructor(
     message: string,
@@ -46,38 +39,12 @@ export function describeToken(token: Token | undefined): string {
   }
 }
 
-/**
- * Options for the single separator-skipping helper.
- *
- * A *separator* is anything that may appear between statements: newlines,
- * comments, and literal `;` operators. Which kinds are skipped is decided
- * per call site:
- *
- * - statement lists skip newlines and comments, and handle the optional
- *   single `;` through `skipStatementSeparators` so that stray separators
- *   fail loudly instead of being silently eaten;
- * - operator continuations (`&&`, `||`, `|`) skip newlines and comments but
- *   never a literal `;`, so `cmd && ; next` stays an error;
- * - `case` item bodies skip a single `;` but stop before a `;;` terminator.
- */
 export type SkipSeparatorsOptions = {
-  /** Skip comment tokens. Default `true`. */
   comments?: boolean;
-  /** Skip newline tokens. Default `true`. */
   newline?: boolean;
-  /**
-   * Skip literal `;` op tokens. Default `false`. `"single"` skips only a
-   * `;` that is not immediately followed by another `;` — the `case` item
-   * body case, where `;;` is the item terminator.
-   */
   semicolon?: boolean | "single";
 };
 
-/**
- * The mutable state all parser modules operate on: the token cursor, the
- * collected comments, and the queue of heredoc-opening redirects whose
- * body tokens the tokenizer has not emitted yet.
- */
 export class ParserState {
   index = 0;
   comments: CommentNode[] = [];
@@ -207,11 +174,6 @@ export class ParserState {
     }
   }
 
-  /**
-   * The single separator-skipping helper. Drains any heredoc bodies queued
-   * on the line that just ended, then skips the separator kinds selected
-   * by `opts` (see `SkipSeparatorsOptions`).
-   */
   skipSeparators(opts: SkipSeparatorsOptions = {}): void {
     const comments = opts.comments ?? true;
     const newline = opts.newline ?? true;
@@ -238,12 +200,6 @@ export class ParserState {
   }
 }
 
-/**
- * Whether the current token can act as the separator between a loop head
- * and its `do` keyword: a literal `;` or a newline. Used by the `for`,
- * `select` and C-style loop productions, which accept exactly one
- * optional separator there.
- */
 export function matchSeparator(s: ParserState): boolean {
   const token = s.peek();
   if (!token) return false;
@@ -252,18 +208,6 @@ export function matchSeparator(s: ParserState): boolean {
   );
 }
 
-/**
- * Skip the separators that may follow a statement inside a statement list.
- *
- * bash allows a single optional `;` immediately after the statement (only
- * whitespace in between), followed by any number of newlines and comments;
- * a `;` after a newline — or a second `;` — is a syntax error, so it is
- * deliberately left in place for the next `parseStatement` to fail on.
- *
- * zsh is lax here (it accepts `foo; ; bar` and `foo\n; bar`), so in zsh
- * mode any run of separators is skipped like before the newline token
- * existed.
- */
 export function skipStatementSeparators(s: ParserState): void {
   if (isZsh(s.options.dialect)) {
     s.skipSeparators({ semicolon: true });

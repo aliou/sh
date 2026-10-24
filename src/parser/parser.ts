@@ -19,17 +19,6 @@ import {
 } from "./state";
 import { wordFromToken } from "./words";
 
-/**
- * Parse a standalone inner program — the body of a command or process
- * substitution found inside a word. Used by the word-conversion module.
- *
- * Only the outer parse's zsh-ness is honored: inner programs have always
- * been parsed with bash-effective dialect checks, and zsh's lax
- * separators must carry over (`$(foo; ; bar)` is valid zsh). `base` is
- * where `source` starts in the outer source; positions carried by errors
- * thrown from the inner program are rebased to outer coordinates so
- * `recoverErrors` reports real positions.
- */
 export function parseInnerProgram(
   source: string,
   options?: ParseOptions,
@@ -49,11 +38,6 @@ export function parseInnerProgram(
   }
 }
 
-/**
- * Translate a position from inner-source coordinates to outer ones. The
- * inner source's first line continues the line `base` sits on, so line 1
- * extends `base`'s column and later lines start fresh.
- */
 function rebasePosition(p: Pos, base: Pos): Pos {
   if (p.line === 1) {
     return {
@@ -124,9 +108,6 @@ export class Parser {
         body.push(parseStatement(this.state));
         skipStatementSeparators(this.state);
       } catch (e) {
-        // Operator-continuation failures carry their own position (the
-        // operator's); other failures point at the token the statement
-        // started at.
         const tok = this.state.tokens[before];
         const pos =
           e instanceof PositionedError
@@ -174,11 +155,6 @@ export class Parser {
     return program;
   }
 
-  /**
-   * Skip the separators that may lead a program: newlines and comments.
-   * zsh also tolerates leading `;` separators, so those are skipped in
-   * zsh mode.
-   */
   private skipLeadingSeparators(): void {
     this.state.skipSeparators({
       semicolon: isZsh(this.state.options.dialect),

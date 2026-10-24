@@ -2,12 +2,6 @@ import { describe, expect, it } from "vitest";
 import { tokenize } from "../tokenizer";
 import { matchSeparator, ParserState, skipStatementSeparators } from "./state";
 
-/**
- * Unit tests for the parser state module: the token cursor and the single
- * parameterized separator-skipping helper that replaced the former
- * `skipSeparators` / `skipCaseSeparators` / `skipOperatorContinuation`
- * trio (aliou/sh#25).
- */
 function stateOf(
   source: string,
   opts?: { keepComments?: boolean },
@@ -19,7 +13,6 @@ function stateOf(
   );
 }
 
-/** Index of the first token whose type/value matches, for assertions. */
 function cursorAfter(s: ParserState, fn: () => void): number {
   fn();
   return s.index;
@@ -50,7 +43,7 @@ describe("ParserState cursor", () => {
     const s = stateOf("if (");
     expect(s.matchKeyword("if")).toBe(true);
     expect(s.matchOp("&&")).toBe(false);
-    expect(s.matchSymbol("(")).toBe(false); // cursor is still on `if`
+    expect(s.matchSymbol("(")).toBe(false);
     s.consume();
     expect(s.matchSymbol("(")).toBe(true);
     expect(s.index).toBe(1);
@@ -68,7 +61,7 @@ describe("ParserState cursor", () => {
 describe("skipSeparators (single parameterized helper)", () => {
   it("skips newlines and comments by default but not literal ;", () => {
     const s = stateOf("\n# c\n; foo", { keepComments: true });
-    expect(cursorAfter(s, () => s.skipSeparators())).toBe(3); // stops at `;`
+    expect(cursorAfter(s, () => s.skipSeparators())).toBe(3);
     expect(s.peek()).toMatchObject({ type: "op", value: ";" });
   });
 
@@ -105,11 +98,9 @@ describe("skipSeparators (single parameterized helper)", () => {
 
   it("drains heredoc bodies to pending redirects while skipping", () => {
     const s = stateOf("x <<EOF\nbody\nEOF\ny");
-    // Simulate the redirect parse having queued the heredoc.
     const redirect = { type: "Redirect" } as never;
     s.pendingHeredocs.push(redirect);
     while (s.matchWord() || s.matchRedir()) s.consume();
-    // cursor now at the newline after `EOF` (the delimiter word)
     s.skipSeparators();
     expect(redirect).toMatchObject({
       heredoc: { type: "Word", parts: [{ type: "Literal", value: "body\n" }] },

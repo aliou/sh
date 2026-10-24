@@ -48,7 +48,6 @@ const TEST_BINARY_OPS = new Set<string>([
   "-ot",
 ]);
 
-/** Parse an extended test clause `[[ ... ]]`. */
 export function parseTestClause(s: ParserState): TestClause {
   const open = s.consumeKeyword("[[");
   checkLang(s.options.dialect, open.pos, "[[", ["bash", "mksh", "zsh"]);

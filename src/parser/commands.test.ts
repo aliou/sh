@@ -15,13 +15,6 @@ import {
   word,
 } from "../test-helpers/ast-builders";
 
-/**
- * Unit tests for the commands module: statements (negation, background),
- * pipelines, simple commands, assignments, array assignments, function
- * declarations, coproc and time clauses. The broad public-surface
- * behavior lives in basic.test.ts; clause bodies are covered by
- * clauses.test.ts.
- */
 describe("parseStatement", () => {
   it("parses negation with comments and newlines after !", () => {
     expect(parse("! foo").ast).toMatchAst(
@@ -43,7 +36,6 @@ describe("parseStatement", () => {
     expect(() => parse("foo & ; bar")).toThrowError(
       "`&` cannot be followed by `;`",
     );
-    // ...but the ;; case terminator is fine, and zsh allows both.
     expect(() => parse("case x in a) foo & ;; esac")).not.toThrow();
     expect(() => parse("foo & ; bar", { dialect: "zsh" })).not.toThrow();
   });

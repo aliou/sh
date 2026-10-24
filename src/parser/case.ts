@@ -8,7 +8,6 @@ import {
 import type { ParserState } from "./state";
 import { wordFromToken } from "./words";
 
-/** Parse a `case ... esac` clause. */
 export function parseCaseClause(s: ParserState): CaseClause {
   const head = s.consumeKeyword("case");
   const wordToken = s.consume();
@@ -65,11 +64,9 @@ export function parseCaseClause(s: ParserState): CaseClause {
   return node;
 }
 
-/** Parse the body of one case item, up to its `;;` terminator or `esac`. */
 function parseCaseItemBody(s: ParserState): Statement[] {
   return allowNestedTrailingRedirects(s, () => {
     const body: Statement[] = [];
-    // Leading separators: newlines and comments (zsh also tolerates `;`).
     s.skipSeparators({
       semicolon: isZsh(s.options.dialect) ? "single" : false,
     });
@@ -84,15 +81,6 @@ function parseCaseItemBody(s: ParserState): Statement[] {
   });
 }
 
-/**
- * Skip the separators between the statements of one case item body.
- *
- * Like statement lists, a literal `;` only counts immediately after the
- * statement it ends: a `;` after a newline (or a doubled `; ;`) is left
- * for the next parseStatement to fail on, matching bash. The `;;` item
- * terminator is never consumed here. zsh is lax and keeps the
- * token-stream behavior the parser had before newline tokens existed.
- */
 function skipCaseStatementSeparators(s: ParserState): void {
   if (isZsh(s.options.dialect)) {
     s.skipSeparators({ semicolon: "single" });
@@ -104,12 +92,6 @@ function skipCaseStatementSeparators(s: ParserState): void {
   s.skipSeparators();
 }
 
-/**
- * Whether the cursor sits on a `;;` case-item terminator. In bash, `;;`
- * is a single token: a space between the two `;`s makes them two
- * separate separators (an error) instead of a terminator. zsh accepts
- * either form, so it keeps the plain token-stream check.
- */
 export function isCaseItemEnd(s: ParserState): boolean {
   if (!s.matchOp(";") || !s.peekOp(";")) return false;
   if (isZsh(s.options.dialect)) return true;

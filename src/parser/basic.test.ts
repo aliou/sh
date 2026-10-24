@@ -214,8 +214,6 @@ describe("parse (phase 1: simple commands)", () => {
   });
 
   it("rejects && with no right-hand side", () => {
-    // Missing continuations name the operator at its position: after a
-    // comment, after a newline, and at plain EOF (matching mvdan/sh).
     expect(() => parse("foo && # comment")).toThrowError(
       "`&&` must be followed by a statement",
     );
