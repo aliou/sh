@@ -24,13 +24,14 @@ import {
   parseWhileClause,
 } from "./clauses";
 import { matchDeclKeyword, parseDeclClause, parseLetClause } from "./decl-let";
+import { PositionedError } from "./errors";
 import { parseForOrCStyleLoop, parseSelectClause } from "./iterators";
 import {
   parseRedirect,
   parseTrailingRedirects,
   withSuppressedTrailingRedirects,
 } from "./redirects";
-import { type ParserState, PositionedError, ZERO_POS } from "./state";
+import { type ParserState, ZERO_POS } from "./state";
 import { parseTestClause } from "./test-clause";
 import { wordFromToken } from "./words";
 

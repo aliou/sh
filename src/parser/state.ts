@@ -6,16 +6,6 @@ import { drainPendingHeredocs } from "./redirects";
 
 export const ZERO_POS: Pos = { offset: 0, line: 1, col: 1 };
 
-export class PositionedError extends Error {
-  constructor(
-    message: string,
-    readonly position: Pos,
-  ) {
-    super(message);
-    this.name = "PositionedError";
-  }
-}
-
 /** Human-readable description of a token, for error messages. */
 export function describeToken(token: Token | undefined): string {
   if (!token) return "";
