@@ -10,13 +10,6 @@ import type { Token, TokenWordPart } from "../tokenizer";
 import { parseArithmetic } from "./arith-parser";
 import { parseInnerProgram } from "./parser";
 
-/**
- * Where an inner program's source (command/process substitution,
- * backticks) starts in the outer source, so errors raised while parsing
- * it can be rebased to outer coordinates. The part's `innerOffset` is
- * absolute, and the opening prefix (`$(`, `>(`, `` ` ``) contains no
- * newline, so the inner start shares the part's line.
- */
 function innerBase(part: TokenWordPart & { innerOffset: number }): Pos {
   return {
     offset: part.innerOffset,
@@ -34,7 +27,6 @@ export function strToWord(value: string): Word {
   return { type: "Word", parts: [{ type: "Literal", value }] };
 }
 
-/** Convert one tokenizer word part into its AST counterpart. */
 export function convertWordPart(
   part: TokenWordPart,
   options?: ParseOptions,
@@ -118,7 +110,6 @@ export function convertWordPart(
   }
 }
 
-/** Convert a `${...}` parameter expansion part into a ParamExp node. */
 export function convertParamExp(
   part: TokenWordPart & { type: "param" },
 ): ParamExp {
@@ -163,11 +154,6 @@ export function convertParamExp(
   return out;
 }
 
-/**
- * Convert a tokenizer word token into a Word AST node. `options` is
- * threaded through so inner programs (command substitutions, ...) are
- * parsed with the outer dialect's separator laxness.
- */
 export function wordFromToken(
   token: Token & { type: "word" },
   options?: ParseOptions,

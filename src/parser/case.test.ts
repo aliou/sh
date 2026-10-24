@@ -62,15 +62,11 @@ describe("parse (case clauses)", () => {
   });
 
   it("keeps newline-derived and literal ;; terminators adjacent", () => {
-    // Regression guard for the first-class newline token: a newline
-    // before `;;` must not be confused with the terminator itself, and
-    // `;;` must stay two adjacent literal `;` tokens.
     expect(() => parse("case x in a) foo\n;; b) bar;; esac")).not.toThrow();
     expect(() => parse("case x in a) foo;; esac")).not.toThrow();
   });
 
   it("rejects a stray single ; where a statement was expected", () => {
-    // bash: `case x in a) foo; ; bar;; esac` is a syntax error.
     expect(() => parse("case x in a) foo; ; bar;; esac")).toThrow();
   });
 
@@ -88,8 +84,6 @@ describe("parse (case clauses)", () => {
   });
 
   it("rejects a leading or doubled ; in a case body (bash parity)", () => {
-    // bash: `a) ; foo;;` and `foo ; ; esac` are syntax errors; `;;` is a
-    // single token, so a space between the two `;`s breaks it apart.
     expect(() => parse("case x in a) ; foo;; esac")).toThrow();
     expect(() => parse("case x in a) foo ; ; esac")).toThrow();
     expect(() => parse("case x in a) foo;;; esac")).toThrow();

@@ -5,11 +5,6 @@ import { program, simple, stmt } from "../test-helpers/ast-builders";
 import { tokenize } from "../tokenizer";
 import { Parser } from "./parser";
 
-/**
- * Unit tests for the parser class shell: the program entry points
- * (`parseProgram`, `parseProgramRecovering`, the streaming sequences).
- * The broad public-surface behavior lives in basic.test.ts.
- */
 describe("Parser", () => {
   it("parses a program through the class directly", () => {
     const parser = new Parser(tokenize("foo; bar"));
@@ -31,8 +26,6 @@ describe("Parser", () => {
   it("streams statements lazily", () => {
     const stmts = [...parseStmtsSeq("foo\nbar")];
     expect(stmts).toHaveLength(2);
-    // A trailing separator is consumed without yielding an extra
-    // statement.
     expect([...parseStmtsSeq("foo;\n")]).toHaveLength(1);
   });
 
