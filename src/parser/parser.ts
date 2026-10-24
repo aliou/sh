@@ -10,10 +10,10 @@ import { isZsh } from "../dialect";
 import type { Token } from "../tokenizer";
 import { tokenize } from "../tokenizer";
 import { parseStatement } from "./commands";
+import { PositionedError } from "./errors";
 import {
   describeToken,
   ParserState,
-  PositionedError,
   skipStatementSeparators,
   ZERO_POS,
 } from "./state";
