@@ -50,3 +50,17 @@ describe("recoverErrors mode", () => {
     expect(result.errors?.[0]?.pos.line).toBeGreaterThan(0);
   });
 });
+
+describe("recoverErrors mode: inner programs", () => {
+  it("reports inner-program errors at real outer positions", () => {
+    const { errors } = parse("x=$(foo &&)", { recoverErrors: true });
+    expect(errors?.[0]?.message).toBe("`&&` must be followed by a statement");
+    expect(errors?.[0]?.pos).toMatchObject({ offset: 8, line: 1, col: 9 });
+  });
+
+  it("rebases inner errors across lines", () => {
+    const source = "echo ok\nx=$(y &&)";
+    const { errors } = parse(source, { recoverErrors: true });
+    expect(errors?.[0]?.pos).toMatchObject({ offset: 14, line: 2, col: 7 });
+  });
+});
