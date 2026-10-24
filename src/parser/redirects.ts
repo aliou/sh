@@ -2,13 +2,6 @@ import type { Pos, Redirect } from "../ast";
 import type { ParserState } from "./state";
 import { wordFromToken } from "./words";
 
-/**
- * Parse a single redirect operator token plus its target word. Heredoc
- * openers (`<<`/`<<-`) only queue here: their body token is emitted by the
- * tokenizer after the newline ending the command line, so the redirect is
- * pushed onto the pending queue and `drainPendingHeredocs` attaches the
- * body once it surfaces.
- */
 export function parseRedirect(s: ParserState): Redirect {
   const token = s.consume();
   if (token.type !== "redir") {

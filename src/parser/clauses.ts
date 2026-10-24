@@ -8,7 +8,6 @@ import {
 } from "./redirects";
 import { type ParserState, skipStatementSeparators } from "./state";
 
-/** Parse a `(...)` subshell. */
 export function parseSubshell(s: ParserState): Subshell {
   const open = s.consumeSymbol("(");
   const body = parseStatementList(s, "(", ")");
@@ -23,7 +22,6 @@ export function parseSubshell(s: ParserState): Subshell {
   return node;
 }
 
-/** Parse a `{ ... }` block. */
 export function parseBlock(s: ParserState): Block {
   const open = s.consumeSymbol("{");
   const body = parseStatementList(s, "{", "}");
@@ -33,11 +31,6 @@ export function parseBlock(s: ParserState): Block {
   return node;
 }
 
-/**
- * Parse a `{ ... }`-style statement list delimited by `endSymbol`, with
- * trailing-redirect capture re-enabled inside (see
- * `allowNestedTrailingRedirects`).
- */
 export function parseStatementList(
   s: ParserState,
   left: string,
@@ -60,9 +53,6 @@ function parseStatementListInner(
       throw new Error(`Unexpected end of input while looking for ${endSymbol}`);
     }
     if (s.matchOp(";")) {
-      // A literal `;` where a statement was expected: bash rejects
-      // `{ ; }` and `{ foo; ; }`, so surface the same empty/short list
-      // failure instead of a deep "Expected a command word".
       if (!isZsh(s.options.dialect)) {
         throw new Error(`"${left}" must be followed by a statement list`);
       }
@@ -79,10 +69,6 @@ function parseStatementListInner(
   return body;
 }
 
-/**
- * Parse statements until one of `endKeywords` is peeked (not consumed).
- * Used for clause bodies (`then`/`else`/`fi`, `do`/`done`, ...).
- */
 export function parseStatementsUntilKeyword(
   s: ParserState,
   left: string,
@@ -123,7 +109,6 @@ function parseStatementsUntilKeywordInner(
   return body;
 }
 
-/** Parse an `if` clause (delegates to the `if`/`elif` chain parser). */
 export function parseIfClause(s: ParserState): IfClause {
   return parseIfChain(s, "if");
 }
@@ -167,7 +152,6 @@ function parseIfChain(s: ParserState, head: "if" | "elif"): IfClause {
   return node;
 }
 
-/** Parse a `while` or `until` clause. */
 export function parseWhileClause(s: ParserState, until: boolean): WhileClause {
   const head = s.consumeKeyword(until ? "until" : "while");
   const keyword = until ? "until" : "while";

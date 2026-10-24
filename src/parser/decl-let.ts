@@ -7,7 +7,6 @@ import { parseRedirect } from "./redirects";
 import type { ParserState } from "./state";
 import { wordFromToken } from "./words";
 
-/** Whether the cursor is on a decl keyword (`export`, `local`, ...). */
 export function matchDeclKeyword(s: ParserState): boolean {
   const token = s.peek();
   if (token?.type !== "word" || token.parts.length !== 1) return false;
@@ -15,7 +14,6 @@ export function matchDeclKeyword(s: ParserState): boolean {
   return part?.type === "lit" && DECL_KEYWORDS.has(part.value);
 }
 
-/** Parse a decl clause (`export`, `declare`, `local`, ...). */
 export function parseDeclClause(s: ParserState): DeclClause {
   const variantToken = s.consume();
   if (variantToken.type !== "word") {
@@ -73,7 +71,6 @@ export function parseDeclClause(s: ParserState): DeclClause {
   return decl;
 }
 
-/** Parse a `let` clause. */
 export function parseLetClause(s: ParserState): LetClause {
   const letTok = s.consumeKeyword("let");
   checkLang(s.options.dialect, letTok.pos, "let", ["bash", "mksh", "zsh"]);
