@@ -23,7 +23,8 @@ import {
   parseSubshell,
   parseWhileClause,
 } from "./clauses";
-import { matchDeclKeyword, parseDeclClause, parseLetClause } from "./decl-let";
+import { DECL_KEYWORDS } from "./constants";
+import { parseDeclClause, parseLetClause } from "./decl-let";
 import { PositionedError } from "./errors";
 import { parseForOrCStyleLoop, parseSelectClause } from "./iterators";
 import {
@@ -148,35 +149,36 @@ function parseContinuationCommand(
   }
 }
 
+const KEYWORD_PARSERS = new Map<string, (s: ParserState) => Command>([
+  ["if", parseIfClause],
+  ["while", (s) => parseWhileClause(s, false)],
+  ["until", (s) => parseWhileClause(s, true)],
+  ["for", parseForOrCStyleLoop],
+  ["select", parseSelectClause],
+  ["case", parseCaseClause],
+  ["time", parseTimeClause],
+  ["coproc", parseCoprocClause],
+  ["[[", parseTestClause],
+  ["function", parseFunctionDecl],
+  ["let", parseLetClause],
+  ...[...DECL_KEYWORDS].map((keyword) => [keyword, parseDeclClause] as const),
+]);
+
+const FUNC_DECL_FIRST = new Set([...DECL_KEYWORDS, "let"]);
+
+function keywordValue(token: Token | undefined): string | undefined {
+  if (token?.type !== "word" || token.parts.length !== 1) return undefined;
+  const part = token.parts[0];
+  return part?.type === "lit" ? part.value : undefined;
+}
+
 export function parseCommandAtom(s: ParserState): Command {
-  if (s.matchKeyword("if")) {
-    return parseIfClause(s);
+  const keyword = keywordValue(s.peek());
+  if (keyword !== undefined && !FUNC_DECL_FIRST.has(keyword)) {
+    const parser = KEYWORD_PARSERS.get(keyword);
+    if (parser) return parser(s);
   }
-  if (s.matchKeyword("while")) {
-    return parseWhileClause(s, false);
-  }
-  if (s.matchKeyword("until")) {
-    return parseWhileClause(s, true);
-  }
-  if (s.matchKeyword("for")) {
-    return parseForOrCStyleLoop(s);
-  }
-  if (s.matchKeyword("select")) {
-    return parseSelectClause(s);
-  }
-  if (s.matchKeyword("case")) {
-    return parseCaseClause(s);
-  }
-  if (s.matchKeyword("time")) {
-    return parseTimeClause(s);
-  }
-  if (s.matchKeyword("coproc")) {
-    return parseCoprocClause(s);
-  }
-  if (s.matchKeyword("[[")) {
-    return parseTestClause(s);
-  }
-  if (s.matchKeyword("function") || looksLikeFuncDecl(s)) {
+  if (looksLikeFuncDecl(s)) {
     return parseFunctionDecl(s);
   }
   if (s.peek()?.type === "arith-cmd") {
@@ -188,11 +190,9 @@ export function parseCommandAtom(s: ParserState): Command {
   if (s.matchSymbol("{")) {
     return parseBlock(s);
   }
-  if (matchDeclKeyword(s)) {
-    return parseDeclClause(s);
-  }
-  if (s.matchKeyword("let")) {
-    return parseLetClause(s);
+  if (keyword !== undefined) {
+    const parser = KEYWORD_PARSERS.get(keyword);
+    if (parser) return parser(s);
   }
   return parseSimpleCommand(s);
 }
