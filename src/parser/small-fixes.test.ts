@@ -52,15 +52,16 @@ describe("small parser fixes from mvdan/sh changelog", () => {
     });
   });
 
-  // v3.10.0: CRLF line endings are treated as LF, including inside heredocs.
-  describe("CRLF line endings are normalized", () => {
-    it("treats CRLF between statements like LF", () => {
+  // Contract token-api.md §5 overrides mvdan/sh v3.10.0: CR is a data
+  // character, never normalized to LF or treated as whitespace.
+  describe("CR is preserved as data", () => {
+    it("keeps CR inside a word before a LF", () => {
       expect(parse("foo\r\nbar")).toMatchAst({
-        ast: program(stmt(simple("foo")), stmt(simple("bar"))),
+        ast: program(stmt(simple("foo\r")), stmt(simple("bar"))),
       });
     });
 
-    it("treats CRLF inside heredoc as LF and matches CRLF delimiters", () => {
+    it("preserves CR in heredoc bodies and matches CR delimiters", () => {
       const src = "cat <<EOF\r\nhello\r\nEOF\r\n";
       const { ast } = parse(src);
       const cmd = ast.body[0]?.command;
@@ -69,7 +70,7 @@ describe("small parser fixes from mvdan/sh changelog", () => {
         const heredoc = cmd.redirects?.[0]?.heredoc;
         expect(heredoc?.parts[0]).toMatchObject({
           type: "Literal",
-          value: "hello\n",
+          value: "hello\r\n",
         });
       }
     });

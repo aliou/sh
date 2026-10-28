@@ -44,7 +44,18 @@ describe("extended glob patterns", () => {
   it("handles nested parens inside the pattern", () => {
     const parts = firstWordParts("ls @(foo|@(bar|baz))");
     expect(parts).toMatchAst([
-      { type: "ExtGlob", op: "@(", pattern: "foo|@(bar|baz)" },
+      {
+        type: "ExtGlob",
+        op: "@(",
+        pattern: "foo|@(bar|baz)",
+        word: {
+          type: "Word",
+          parts: [
+            { type: "Literal", value: "foo|" },
+            { type: "ExtGlob", op: "@(", pattern: "bar|baz" },
+          ],
+        },
+      },
     ]);
   });
 
