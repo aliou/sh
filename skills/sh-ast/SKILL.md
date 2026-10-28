@@ -337,5 +337,37 @@ function isSimpleCommand(node: unknown): node is { type: "SimpleCommand" } {
 ## Limitations
 
 - Not a complete POSIX/Bash parser; some edge cases may differ from mvdan/sh.
-- `ExtGlob` keeps its inner pattern as a raw string.
 - `parse` does not perform brace expansion; call `splitBraces` explicitly.
+- Not parsed structurally (still opaque): `export`/`readonly` quoted operands
+  (bash does not arithmetic-evaluate them), `nameref` operands, and
+  arithmetic text inside `(( ... ))`/`$(( ... ))` beyond what the arithmetic
+  grammar supports — array subscripts with substitutions in an arithmetic
+  command are rejected with a parse error instead of being parsed.
+
+## What is parsed structurally (substitution visibility)
+
+The recursive `CmdSubst`/`ProcSubst` walk covers all of the following, so the
+documented guard sees them:
+
+- `${name OP word}` operator words (`${x:-$(...)}`, `${x:=`...`}`), pattern
+  replacement `/pat/with`, slices, and array indices inside `${...}`.
+- Extglob patterns (`?(` `*(` `+(` `@(` `!(`): `ExtGlob.word` holds the
+  structural parse whenever the pattern is not a pure literal.
+- Indexed array elements: `a=([idx]=value)` keeps `ArrayElem.index` and
+  `ArrayElem.value` structured, including expansions inside the index.
+- Heredoc bodies with unquoted delimiters (`<<EOF`, not `<<'EOF'`): the
+  `Redirect.heredoc` word is parsed expansion-aware.
+- `let` operands and `declare`/`typeset`/`local` operands that look like
+  indexed assignments (`name[subscript]=value`): embedded `$(...)` and
+  backticks surface even when the operand was quoted, matching bash
+  arithmetic evaluation of subscripts.
+- Backtick substitutions decode nested escaped backticks (`` `echo \`x\`` ``)
+  and parse the decoded body.
+- `$'...'` produces `AnsiC` (escape-decoded `value`, verbatim `raw`), and
+  `$"..."` produces `LocaleStr`, instead of being mis-split as quoting.
+- Escaped characters never count toward keyword recognition (`time`, the
+  declaration builtins) or the `NAME=` split of an assignment prefix.
+- `splitBraces` keeps comma-list precedence over `..` ranges
+  (`{echo,printf..x}` is a list `{echo, printf..x}`, `{1..2,3}` is a list
+  `{1..2, 3}`), preserves `..` spelling on fallback, and never forms braces
+  from backslash-escaped characters.

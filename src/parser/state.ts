@@ -115,7 +115,10 @@ export class ParserState {
     const token = this.peek();
     if (token?.type !== "word" || token.parts.length !== 1) return false;
     const part = token.parts[0];
-    return part?.type === "lit" && part.value === value;
+    // Escape-provenance literals never contribute to keyword matching.
+    return (
+      part?.type === "lit" && part.escaped !== true && part.value === value
+    );
   }
 
   matchKeywordIn(values: string[]): boolean {
@@ -141,6 +144,7 @@ export class ParserState {
       token.type !== "word" ||
       token.parts.length !== 1 ||
       token.parts[0]?.type !== "lit" ||
+      token.parts[0].escaped === true ||
       token.parts[0].value !== value
     ) {
       throw new Error(`Expected keyword ${value}`);

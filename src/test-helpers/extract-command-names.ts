@@ -15,13 +15,15 @@ export function extractCommandNames(node: unknown): string[] {
     const firstWord = n.words[0] as
       | { parts: Array<{ type: string; value?: string }> }
       | undefined;
-    // Only extract if first word is a plain literal (no expansions)
+    // Only extract if every part of the first word is a plain literal (no
+    // expansions). Adjacent literals join — the tokenizer may split literal
+    // runs around backslash escapes without changing the command name.
     if (
       firstWord &&
-      firstWord.parts.length === 1 &&
-      firstWord.parts[0]?.type === "Literal"
+      firstWord.parts.length > 0 &&
+      firstWord.parts.every((p) => p.type === "Literal")
     ) {
-      names.push(firstWord.parts[0].value as string);
+      names.push(firstWord.parts.map((p) => p.value as string).join(""));
     }
   }
 
