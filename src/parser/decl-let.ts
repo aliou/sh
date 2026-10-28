@@ -5,13 +5,17 @@ import { tryParseAssignment } from "./commands";
 import { DECL_KEYWORDS } from "./constants";
 import { parseRedirect } from "./redirects";
 import type { ParserState } from "./state";
-import { wordFromToken } from "./words";
+import { ARITH_DECL_VARIANTS, arithOperandWord, wordFromToken } from "./words";
 
 export function matchDeclKeyword(s: ParserState): boolean {
   const token = s.peek();
   if (token?.type !== "word" || token.parts.length !== 1) return false;
   const part = token.parts[0];
-  return part?.type === "lit" && DECL_KEYWORDS.has(part.value);
+  return (
+    part?.type === "lit" &&
+    part.escaped !== true &&
+    DECL_KEYWORDS.has(part.value)
+  );
 }
 
 export function parseDeclClause(s: ParserState): DeclClause {
@@ -51,7 +55,12 @@ export function parseDeclClause(s: ParserState): DeclClause {
       }
 
       s.consume();
-      args.push(wordFromToken(token, s.options));
+      const word = wordFromToken(token, s.options);
+      args.push(
+        ARITH_DECL_VARIANTS.has(variant)
+          ? arithOperandWord(token, word, s.options)
+          : word,
+      );
       continue;
     }
 
@@ -86,7 +95,9 @@ export function parseLetClause(s: ParserState): LetClause {
     if (s.matchWord()) {
       const token = s.consume();
       if (token.type !== "word") break;
-      exprs.push(wordFromToken(token, s.options));
+      exprs.push(
+        arithOperandWord(token, wordFromToken(token, s.options), s.options),
+      );
       continue;
     }
 

@@ -54,9 +54,11 @@ describe("parse (phase 2: words, quotes, comments)", () => {
       ast: program(stmt(simple("foo", "bar"))),
     });
   });
-  it("treats backslash-CRLF as whitespace", () => {
+  it("treats backslash-CR as an escaped CR character, not a fold", () => {
+    // Contract token-api.md §5: only \<LF> folds. `\<CR>` is an escaped
+    // carriage return (data); the following LF ends the statement.
     expect(parse("foo \\\r\n bar")).toMatchAst({
-      ast: program(stmt(simple("foo", "bar"))),
+      ast: program(stmt(simple("foo", "\r")), stmt(simple("bar"))),
     });
   });
 

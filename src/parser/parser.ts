@@ -60,12 +60,20 @@ export class Parser {
     this.state = new ParserState(tokens, options);
   }
 
-  /** Yield each top-level statement as it's parsed. */
+  /**
+   * Yield each top-level statement as it's parsed. Statements carrying
+   * heredocs are yielded only after their bodies have been drained, so a
+   * yielded statement is always complete (no mutation after the yield).
+   */
   *statementsSeq(): Generator<Statement> {
     this.skipLeadingSeparators();
     while (!this.state.isEof()) {
-      yield parseStatement(this.state);
+      const stmt = parseStatement(this.state);
+      // Heredoc bodies arrive after the newline that ends the command
+      // line; consume separators (draining pending heredoc bodies to
+      // their redirects) before yielding so the statement is complete.
       skipStatementSeparators(this.state);
+      yield stmt;
     }
   }
 

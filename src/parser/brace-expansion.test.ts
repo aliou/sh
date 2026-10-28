@@ -156,4 +156,63 @@ describe("splitBraces", () => {
       });
     }
   });
+
+  // Security regression: split-braces/mixed-list-range-delimiter-loss.
+  // Comma lists keep precedence over `..` ranges, and fallbacks preserve
+  // the original separator spelling instead of normalizing to `..`.
+  it("a comma list with a '..' member stays a list with '..' intact", () => {
+    const w = parseFirstWord("{echo,printf..x}");
+    splitBraces(w);
+    expect(w).toMatchAst(
+      word(brace(false, word(lit("echo")), word(lit("printf..x")))),
+    );
+  });
+
+  it("numeric mixed form {1,2..3} stays a list", () => {
+    const w = parseFirstWord("{1,2..3}");
+    splitBraces(w);
+    expect(w).toMatchAst(word(brace(false, word(lit("1")), word(lit("2..3")))));
+  });
+
+  it("a range followed by a comma merges the range split into literals", () => {
+    const w = parseFirstWord("{1..2,3}");
+    splitBraces(w);
+    expect(w).toMatchAst(word(brace(false, word(lit("1..2")), word(lit("3")))));
+  });
+
+  it("Control: a plain comma list still splits", () => {
+    const w = parseFirstWord("{echo,printf}");
+    splitBraces(w);
+    expect(w).toMatchAst(
+      word(brace(false, word(lit("echo")), word(lit("printf")))),
+    );
+  });
+
+  it("a broken sequence keeps '..' separators in the fallback", () => {
+    const w = parseFirstWord("{1..x}");
+    splitBraces(w);
+    expect(w).toMatchAst(
+      word(lit("{"), lit("1"), lit(".."), lit("x"), lit("}")),
+    );
+  });
+
+  it("escaped braces and commas (single-char literal parts) never form braces", () => {
+    // Contract token shape for `\{a,b\}`: escaped characters are their own
+    // single-character literal parts between plain lit runs.
+    const w = word(lit("{"), lit("a,b"), lit("}"));
+    splitBraces(w);
+    expect(w).toMatchAst(word(lit("{"), lit("a,b"), lit("}")));
+  });
+
+  it("an escaped comma inside a brace stays literal data", () => {
+    // `a{b\,c,d}`: the escaped comma is its own literal part.
+    const w = word(lit("a{b"), lit(","), lit("c,d}"));
+    splitBraces(w);
+    expect(w).toMatchAst(
+      word(
+        lit("a"),
+        brace(false, word(lit("b"), lit(","), lit("c")), word(lit("d"))),
+      ),
+    );
+  });
 });

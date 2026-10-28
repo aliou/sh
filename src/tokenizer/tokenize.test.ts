@@ -238,7 +238,7 @@ describe("CR semantics", () => {
       { type: "lit", value: "ec" },
       { type: "lit", value: "\r", escaped: true },
     ]);
-    expect(tokens[1]).toMatchObject({ type: "op", value: ";", newline: true });
+    expect(tokens[1]).toMatchObject({ type: "newline" });
     expect(wordAt(tokens, 2)).toMatchObject([{ type: "lit", value: "ho" }]);
   });
 

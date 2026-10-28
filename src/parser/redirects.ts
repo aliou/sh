@@ -1,6 +1,6 @@
 import type { Pos, Redirect } from "../ast";
 import type { ParserState } from "./state";
-import { wordFromToken } from "./words";
+import { scanExpansionText, wordFromToken } from "./words";
 
 export function parseRedirect(s: ParserState): Redirect {
   const token = s.consume();
@@ -45,16 +45,28 @@ export function drainPendingHeredocs(s: ParserState): void {
     if (!redirect) break;
     const bodyToken = s.consume();
     if (bodyToken.type !== "heredoc-body") break;
+    // Contract token-api.md §4: bodies of unquoted delimiters arrive with
+    // `expand: true`; parse them expansion-aware so embedded `$(...)` and
+    // friends surface as structured parts.
+    const parts =
+      bodyToken.expand === true
+        ? scanExpansionText(bodyToken.content, s.options, {
+            base: bodyToken.pos,
+          })
+        : undefined;
     redirect.heredoc = {
       type: "Word",
-      parts: [
-        {
-          type: "Literal",
-          value: bodyToken.content,
-          pos: bodyToken.pos,
-          end: bodyToken.end,
-        },
-      ],
+      parts:
+        parts && parts.length > 0
+          ? parts
+          : [
+              {
+                type: "Literal",
+                value: bodyToken.content,
+                pos: bodyToken.pos,
+                end: bodyToken.end,
+              },
+            ],
       pos: bodyToken.pos,
       end: bodyToken.end,
     };

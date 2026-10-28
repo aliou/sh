@@ -13,7 +13,7 @@ import type {
   Word,
 } from "../ast";
 import { checkLang, isZsh } from "../dialect";
-import type { Token } from "../tokenizer";
+import type { Token, TokenWordPart } from "../tokenizer";
 import { tokenPartsText } from "../tokenizer";
 import { parseArithmetic } from "./arith-parser";
 import { isCaseItemEnd, parseCaseClause } from "./case";
@@ -34,7 +34,12 @@ import {
 } from "./redirects";
 import { type ParserState, ZERO_POS } from "./state";
 import { parseTestClause } from "./test-clause";
-import { wordFromToken } from "./words";
+import {
+  convertWordPart,
+  sliceLitPart,
+  splitIndexedArrayElem,
+  wordFromToken,
+} from "./words";
 
 export function wrapStatement(command: Command): Statement {
   return {
@@ -389,28 +394,50 @@ export function tryParseAssignment(
   token: Token & { type: "word" },
 ): Assignment | undefined {
   const parts = token.parts;
-  if (parts.length !== 1) return undefined;
-  const part = parts[0];
-  if (part?.type !== "lit") return undefined;
-  const raw = part.value;
-
+  // The NAME must be built from plain unescaped literals; the delimiter
+  // (`=` or `+=`) must be an unescaped literal character. Anything else
+  // (quoted text, escapes, expansions) before the delimiter means the
+  // word is not an assignment, matching bash.
+  let name = "";
   let append = false;
-  let eqIndex = raw.indexOf("+=");
-  if (eqIndex > 0) {
-    append = true;
-  } else {
-    eqIndex = raw.indexOf("=");
+  let delimPartIdx = -1;
+  let delimCharIdx = -1;
+  for (let p = 0; p < parts.length; p++) {
+    const part = parts[p];
+    if (part?.type !== "lit" || part.escaped === true) {
+      return undefined;
+    }
+    const eq = part.value.indexOf("=");
+    if (eq === -1) {
+      name += part.value;
+      continue;
+    }
+    if (eq > 0 && part.value.charAt(eq - 1) === "+") {
+      append = true;
+      name += part.value.slice(0, eq - 1);
+    } else {
+      name += part.value.slice(0, eq);
+    }
+    delimPartIdx = p;
+    delimCharIdx = eq;
+    break;
   }
-  if (eqIndex <= 0) return undefined;
-
-  const name = raw.slice(0, eqIndex);
+  if (delimPartIdx === -1) return undefined;
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return undefined;
 
-  const afterEq = raw.slice(eqIndex + (append ? 2 : 1));
+  const delimPart = parts[delimPartIdx] as TokenWordPart & { type: "lit" };
+  const valueParts: TokenWordPart[] = [];
+  const head = sliceLitPart(
+    delimPart,
+    delimCharIdx + 1,
+    delimPart.value.length,
+  );
+  if (head) valueParts.push(head);
+  valueParts.push(...parts.slice(delimPartIdx + 1));
 
   const nextToken = s.peekToken(1);
   if (
-    afterEq === "" &&
+    valueParts.length === 0 &&
     nextToken?.type === "symbol" &&
     (nextToken as { value: string }).value === "("
   ) {
@@ -436,10 +463,12 @@ export function tryParseAssignment(
     end: token.end,
   };
   if (append) assignment.append = true;
-  if (afterEq.length > 0) {
+  if (valueParts.length > 0) {
     assignment.value = {
       type: "Word",
-      parts: [{ type: "Literal", value: afterEq }],
+      parts: valueParts.map((p) => convertWordPart(p, s.options)),
+      pos: valueParts[0]?.pos ?? token.pos,
+      end: token.end,
     };
   }
   return assignment;
@@ -476,26 +505,33 @@ function parseArrayAssignment(
       throw new Error("Expected word in array expression");
     }
 
-    const text = tokenPartsText(token.parts);
-
-    // Check for [index]=value pattern
-    const indexMatch = text.match(/^\[([^\]]+)\]=(.*)$/);
-    if (indexMatch) {
-      const indexStr = indexMatch[1] as string;
-      const valStr = indexMatch[2] as string;
+    // Indexed element `[index]=value`: match the boundary on literal
+    // text only, keeping structured index/value parts so expansions
+    // like `[0$(cmd)]=$(cmd2)` stay visible (do not flatten with
+    // tokenPartsText, which erases substitution parts).
+    const split = splitIndexedArrayElem(token.parts);
+    if (split) {
+      const indexParts = split.index.map((p) => convertWordPart(p, s.options));
       const elem: ArrayElem = {
         type: "ArrayElem",
         index: {
           type: "Word",
-          parts: [{ type: "Literal", value: indexStr }],
+          parts: indexParts,
+          pos: indexParts[0]?.pos ?? token.pos,
+          end: indexParts[indexParts.length - 1]?.end ?? token.end,
         },
         pos: token.pos,
         end: token.end,
       };
-      if (valStr.length > 0) {
+      if (split.value.length > 0) {
+        const valueParts = split.value.map((p) =>
+          convertWordPart(p, s.options),
+        );
         elem.value = {
           type: "Word",
-          parts: [{ type: "Literal", value: valStr }],
+          parts: valueParts,
+          pos: valueParts[0]?.pos ?? token.pos,
+          end: valueParts[valueParts.length - 1]?.end ?? token.end,
         };
       }
       elems.push(elem);
