@@ -14,7 +14,7 @@ import { scanExpansion } from "./scan-expansion";
 import { scanExtGlob } from "./scan-extglob";
 import { tryRedirOp } from "./scan-redir";
 import type { SymbolTokenValue, Token, TokenWordPart } from "./types";
-import { tokenPartsText } from "./utils";
+import { findAnsiCEnd, heredocDelimiter } from "./utils";
 
 export function tokenize(source: string, options: ParseOptions = {}): Token[] {
   const map = new SourceMap(source);
@@ -24,7 +24,11 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
   // Heredocs whose delimiter has been seen but body hasn't been collected yet,
   // in order. Drained on each newline. Replaces an earlier O(n²) per-newline
   // scan over all tokens.
-  const heredocQueue: { strip: boolean; delimiter: string }[] = [];
+  const heredocQueue: {
+    strip: boolean;
+    delimiter: string;
+    quoted: boolean;
+  }[] = [];
 
   // Track whether we are inside a [[ ... ]] test clause. '#' has no comment
   // meaning inside such tests, so we suppress comment tokenization there.
@@ -54,7 +58,9 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
   };
 
   // Whenever a `<<` or `<<-` redir is followed by a delimiter word, queue it
-  // for the next newline.
+  // for the next newline. The delimiter is derived from the word's ORIGINAL
+  // SOURCE SPAN with quote removal only, so expansion-looking text (`$x`,
+  // `$(...)`, backticks) is preserved literally.
   const queueHeredocIfPending = () => {
     const last = tokens[tokens.length - 1];
     const prev = tokens[tokens.length - 2];
@@ -65,34 +71,28 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       prev.type === "redir" &&
       (prev.op === "<<" || prev.op === "<<-")
     ) {
-      heredocQueue.push({
-        strip: prev.op === "<<-",
-        delimiter: tokenPartsText(last.parts),
-      });
+      const { delimiter, quoted } = heredocDelimiter(
+        source.slice(last.pos.offset, last.end.offset),
+      );
+      heredocQueue.push({ strip: prev.op === "<<-", delimiter, quoted });
     }
   };
 
   while (i < source.length) {
     const ch = source.charAt(i);
 
-    if (ch === " " || ch === "\t" || ch === "\r") {
+    if (ch === " " || ch === "\t") {
       atBoundary = true;
       i += 1;
       continue;
     }
 
+    // `\r` is an ordinary character (bash semantics), not whitespace and not
+    // a word terminator. Only backslash-LF folds; backslash-CRLF does not.
     if (ch === "\\" && source.charAt(i + 1) === "\n") {
       atBoundary = true;
       i += 2;
       continue;
-    }
-
-    if (ch === "\\" && source.charAt(i + 1) === "\r") {
-      if (source.charAt(i + 2) === "\n") {
-        atBoundary = true;
-        i += 3;
-        continue;
-      }
     }
 
     if (ch === "\n") {
@@ -117,29 +117,49 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
         if (!hd) break;
         const bodyStart = i;
         let body = "";
+        // Physical lines accumulated under backslash-newline folding
+        // (unquoted delimiters only). CR bytes stay verbatim in lines.
+        let pending = "";
+        let terminated = false;
         delimiterNewline = -1;
         while (i < source.length) {
           let lineEnd = source.indexOf("\n", i);
           if (lineEnd === -1) lineEnd = source.length;
-          let realLineEnd = lineEnd;
-          if (
-            realLineEnd > i &&
-            source.charCodeAt(realLineEnd - 1) === 13 /* \r */
+          const hasNewline = lineEnd < source.length;
+          let line = source.slice(i, lineEnd);
+          i = hasNewline ? lineEnd + 1 : lineEnd;
+          if (hd.strip) line = line.replace(/^\t+/, "");
+          const logical = pending + line;
+          // Fold only an ODD trailing backslash run: a single trailing `\`
+          // before LF is a line continuation, while `\\` before LF is an
+          // escaped backslash followed by LF and terminates the line.
+          let trailingBackslashes = 0;
+          while (
+            logical.charCodeAt(logical.length - 1 - trailingBackslashes) === 92
           ) {
-            realLineEnd -= 1;
+            trailingBackslashes += 1;
           }
-          const line = source.slice(i, realLineEnd);
-          const processedLine = hd.strip ? line.replace(/^\t+/, "") : line;
-          i = lineEnd < source.length ? lineEnd + 1 : lineEnd;
-          if (processedLine === hd.delimiter) {
-            if (lineEnd < source.length) delimiterNewline = lineEnd;
+          if (!hd.quoted && hasNewline && trailingBackslashes % 2 === 1) {
+            pending = logical.slice(0, -1);
+            continue;
+          }
+          pending = "";
+          if (logical === hd.delimiter) {
+            terminated = true;
+            if (hasNewline) delimiterNewline = lineEnd;
             break;
           }
-          body += `${processedLine}\n`;
+          body += `${logical}\n`;
+        }
+        if (!terminated) {
+          throw new Error(`Unclosed heredoc "${hd.delimiter}"`);
         }
         tokens.push({
           type: "heredoc-body",
           content: body,
+          expand: !hd.quoted,
+          delimiter: hd.delimiter,
+          quoted: hd.quoted,
           pos: map.posAt(bodyStart),
           end: map.posAt(i),
         });
@@ -183,11 +203,7 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       // (space, tab, newline, EOF). Otherwise it's part of a word, e.g.
       // `!=` inside `[[ ... ]]` or `!foo` as a literal.
       const isNegation =
-        next === "" ||
-        next === " " ||
-        next === "\t" ||
-        next === "\n" ||
-        next === "\r";
+        next === "" || next === " " || next === "\t" || next === "\n";
       if (next !== "(" && isNegation) {
         tokens.push({
           type: "op",
@@ -349,7 +365,6 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
             next === " " ||
             next === "\t" ||
             next === "\n" ||
-            next === "\r" ||
             next === ";");
         if (!isBlockOpen) {
           // Fall through to word parsing.
@@ -442,19 +457,19 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
         continue;
       }
 
-      if (currentChar === "\\" && source.charAt(i + 1) === "\r") {
-        if (source.charAt(i + 2) === "\n") {
-          i += 3;
-          if (current.length === 0) {
-            litStart = i;
-          }
-          continue;
-        }
-      }
-
+      // Backslash escape in a bare word: decode to the escaped character and
+      // emit it as its own part so provenance (escaped vs plain) survives.
       if (currentChar === "\\" && i + 1 < source.length) {
-        current += source.charAt(i + 1);
+        flushLit();
+        parts.push({
+          type: "lit",
+          value: source.charAt(i + 1),
+          pos: map.posAt(i),
+          end: map.posAt(i + 2),
+          escaped: true,
+        });
         i += 2;
+        litStart = i;
         continue;
       }
 
@@ -486,7 +501,6 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       if (
         currentChar === " " ||
         currentChar === "\t" ||
-        currentChar === "\r" ||
         currentChar === "\n" ||
         operatorChars.has(currentChar) ||
         redirChars.has(currentChar) ||
@@ -524,79 +538,48 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
       if (currentChar === '"') {
         flushLit();
         const dblStart = i;
-        i += 1;
-        const dblParts: TokenWordPart[] = [];
-        let dblBuf = "";
-        let dblLitStart = i;
-        const flushDblLit = () => {
-          if (dblBuf.length > 0) {
-            dblParts.push({
-              type: "lit",
-              value: dblBuf,
-              pos: map.posAt(dblLitStart),
-              end: map.posAt(i),
-            });
-            dblBuf = "";
-          }
-          dblLitStart = i;
-        };
-        let closed = false;
-        while (i < source.length) {
-          const dqChar = source.charAt(i);
-          if (dqChar === "\\" && source.charAt(i + 1) === "\n") {
-            i += 2;
-            continue;
-          }
-          if (dqChar === "\\" && source.charAt(i + 1) === "\r") {
-            if (source.charAt(i + 2) === "\n") {
-              i += 3;
-              continue;
-            }
-          }
-          if (dqChar === "\\" && i + 1 < source.length) {
-            dblBuf += dqChar + source.charAt(i + 1);
-            i += 2;
-            continue;
-          }
-          if (dqChar === "$") {
-            flushDblLit();
-            const exp = scanExpansion(source, i, map, options);
-            if (exp) {
-              dblParts.push(exp.part);
-              i = exp.end;
-              dblLitStart = i;
-              continue;
-            }
-            dblBuf += dqChar;
-            i += 1;
-            continue;
-          }
-          if (dqChar === "`") {
-            flushDblLit();
-            const bt = scanBacktick(source, i, map);
-            dblParts.push(bt.part);
-            i = bt.end;
-            dblLitStart = i;
-            continue;
-          }
-          if (dqChar === '"') {
-            i += 1;
-            closed = true;
-            break;
-          }
-          dblBuf += dqChar;
-          i += 1;
-        }
-        if (!closed) {
-          throw new Error("Unclosed double quote");
-        }
-        flushDblLit();
+        const dbl = scanDoubleQuoted(source, i + 1, map, options);
         parts.push({
           type: "dbl",
-          parts: dblParts,
+          parts: dbl.parts,
           pos: map.posAt(dblStart),
-          end: map.posAt(i),
+          end: map.posAt(dbl.end),
         });
+        i = dbl.end;
+        litStart = i;
+        continue;
+      }
+
+      if (currentChar === "$" && source.charAt(i + 1) === "'") {
+        flushLit();
+        const ansiStart = i;
+        const close = findAnsiCEnd(source, i + 2);
+        if (close === -1) {
+          throw new Error("Unclosed ANSI-C quote");
+        }
+        parts.push({
+          type: "ansi-c",
+          value: source.slice(i + 2, close),
+          raw: source.slice(i, close + 1),
+          pos: map.posAt(ansiStart),
+          end: map.posAt(close + 1),
+        });
+        i = close + 1;
+        litStart = i;
+        continue;
+      }
+
+      if (currentChar === "$" && source.charAt(i + 1) === '"') {
+        flushLit();
+        const locStart = i;
+        const loc = scanDoubleQuoted(source, i + 2, map, options);
+        parts.push({
+          type: "locale-str",
+          parts: loc.parts,
+          pos: map.posAt(locStart),
+          end: map.posAt(loc.end),
+        });
+        i = loc.end;
         litStart = i;
         continue;
       }
@@ -655,5 +638,84 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
     atBoundary = false;
   }
 
+  // A `<<`/`<<-` delimiter line never followed by a body newline means the
+  // heredoc body is empty and the terminator never appears.
+  const pendingHeredoc = heredocQueue[0];
+  if (pendingHeredoc) {
+    throw new Error(`Unclosed heredoc "${pendingHeredoc.delimiter}"`);
+  }
+
   return tokens;
+}
+
+/**
+ * Scan a double-quoted region starting just past the opening `"` (at `from`)
+ * and ending just past the closing `"`. Shared by `"..."` word parts and
+ * `$"..."` locale strings, which use the same inner grammar: backslash-LF
+ * folds (backslash-CRLF does NOT), `$` expansions and backticks are scanned,
+ * every other character stays literal.
+ */
+function scanDoubleQuoted(
+  source: string,
+  from: number,
+  map: SourceMap,
+  options: ParseOptions,
+): { parts: TokenWordPart[]; end: number } {
+  const parts: TokenWordPart[] = [];
+  let buf = "";
+  let litStart = from;
+  let i = from;
+  const flushLit = () => {
+    if (buf.length > 0) {
+      parts.push({
+        type: "lit",
+        value: buf,
+        pos: map.posAt(litStart),
+        end: map.posAt(i),
+      });
+      buf = "";
+    }
+    litStart = i;
+  };
+  while (i < source.length) {
+    const ch = source.charAt(i);
+    if (ch === "\\" && source.charAt(i + 1) === "\n") {
+      i += 2;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < source.length) {
+      buf += ch + source.charAt(i + 1);
+      i += 2;
+      continue;
+    }
+    if (ch === "$") {
+      flushLit();
+      const exp = scanExpansion(source, i, map, options);
+      if (exp) {
+        parts.push(exp.part);
+        i = exp.end;
+        litStart = i;
+        continue;
+      }
+      buf += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === "`") {
+      flushLit();
+      const bt = scanBacktick(source, i, map);
+      parts.push(bt.part);
+      i = bt.end;
+      litStart = i;
+      continue;
+    }
+    if (ch === '"') {
+      i += 1;
+      flushLit();
+      return { parts, end: i };
+    }
+    buf += ch;
+    i += 1;
+  }
+  throw new Error("Unclosed double quote");
 }

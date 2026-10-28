@@ -6,11 +6,13 @@ import type {
   Block,
   CaseClause,
   CaseItem,
+  CmdSubst,
   Command,
   CommentNode,
   CoprocClause,
   CStyleLoop,
   DeclClause,
+  ExtGlob,
   ForClause,
   FunctionDecl,
   IfClause,
@@ -20,6 +22,7 @@ import type {
   ParseError,
   ParseOptions,
   Pos,
+  ProcSubst,
   Program,
   Redirect,
   SelectClause,
@@ -43,6 +46,8 @@ import type {
 } from "../tokenizer";
 import { tokenPartsText } from "../tokenizer";
 import { SourceMap } from "../tokenizer/cursor";
+import { scanBacktick } from "../tokenizer/scan-backtick";
+import { scanExpansion } from "../tokenizer/scan-expansion";
 import { tokenize } from "../tokenizer/tokenize";
 import { parseArithmetic } from "./arith-parser";
 import { DECL_KEYWORDS } from "./constants";
@@ -94,12 +99,386 @@ const TEST_BINARY_OPS = new Set<string>([
 
 /**
  * Wrap a raw substring (e.g. a slice offset or a replacement pattern) as a
- * single-literal Word. The string was extracted from inside `${...}` so it
- * has no inner expansions to recurse into.
+ * single-literal Word. Only used when the string cannot contain expansions;
+ * strings captured from user source go through `wordFromShellSource`.
  */
 function strToWord(value: string): Word {
   return { type: "Word", parts: [{ type: "Literal", value }] };
 }
+
+/** Anchor a relative position (from a re-scanned fragment) to the source. */
+function rebasePos(pos: Pos, base: Pos): Pos {
+  return {
+    offset: pos.offset + base.offset,
+    line: pos.line + base.line - 1,
+    col: pos.line === 1 ? pos.col + base.col - 1 : pos.col,
+  };
+}
+
+/**
+ * Absolute position of `relOffset` inside `text`, where the text starts at
+ * `base`. Walks the text so newlines advance the line and reset the col.
+ */
+function absPos(base: Pos, text: string, relOffset: number): Pos {
+  let line = base.line;
+  let lastNewline = -1;
+  const end = Math.min(relOffset, text.length);
+  for (let i = 0; i < end; i++) {
+    if (text.charCodeAt(i) === 10) {
+      line += 1;
+      lastNewline = i;
+    }
+  }
+  return {
+    offset: base.offset + relOffset,
+    line,
+    col: lastNewline === -1 ? base.col + relOffset : relOffset - lastNewline,
+  };
+}
+
+function isPos(value: unknown): value is Pos {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Pos).offset === "number" &&
+    typeof (value as Pos).line === "number" &&
+    typeof (value as Pos).col === "number"
+  );
+}
+
+/**
+ * Opening-delimiter length (`$(`, `<(`, `>(`, backtick) per substitution
+ * node, so rebaseTree can locate the body origin of nested substitutions
+ * when anchoring a reparsed fragment to the source.
+ */
+const substOpenLen = new WeakMap<object, number>();
+
+/**
+ * Rebase every position in a converted subtree by `base`, exactly once per
+ * level. Substitution bodies are parsed from their inner text, so their
+ * descendants rebase against the body origin instead of the node origin.
+ */
+function rebaseTree(node: unknown, base: Pos): void {
+  if (Array.isArray(node)) {
+    for (const item of node) rebaseTree(item, base);
+    return;
+  }
+  if (!node || typeof node !== "object") return;
+  const n = node as Record<string, unknown> & { pos?: Pos; end?: Pos };
+  let bodyBase: Pos | undefined;
+  if ((n.type === "CmdSubst" || n.type === "ProcSubst") && isPos(n.pos)) {
+    const openLen = substOpenLen.get(n) ?? 2;
+    bodyBase = rebasePos(
+      {
+        offset: n.pos.offset + openLen,
+        line: n.pos.line,
+        col: n.pos.col + openLen,
+      },
+      base,
+    );
+  }
+  if (isPos(n.pos)) n.pos = rebasePos(n.pos, base);
+  if (isPos(n.end)) n.end = rebasePos(n.end, base);
+  for (const [key, value] of Object.entries(n)) {
+    if (key === "pos" || key === "end" || key === "type") continue;
+    if (key === "stmts" && bodyBase) {
+      rebaseTree(value, bodyBase);
+      continue;
+    }
+    rebaseTree(value, base);
+  }
+}
+
+/** Append literal text to `parts`, coalescing with a trailing Literal. */
+function pushLiteral(parts: WordPart[], value: string, pos?: Pos, end?: Pos) {
+  if (value.length === 0) return;
+  const prev = parts[parts.length - 1];
+  if (prev?.type === "Literal") {
+    prev.value += value;
+    if (end) prev.end = end;
+    return;
+  }
+  const lit: WordPart = { type: "Literal", value };
+  if (pos) lit.pos = pos;
+  if (end) lit.end = end;
+  parts.push(lit);
+}
+
+/**
+ * Merge adjacent Literal parts into one. Escape provenance lives on the
+ * token stream (consumed by keyword/assignment checks before conversion);
+ * at the AST level `a\ b` is a single literal, matching bash semantics.
+ */
+function mergeLiteralParts(parts: WordPart[]): WordPart[] {
+  const out: WordPart[] = [];
+  for (const part of parts) {
+    const prev = out[out.length - 1];
+    if (part.type === "Literal" && prev?.type === "Literal") {
+      prev.value += part.value;
+      if (part.end) prev.end = part.end;
+      continue;
+    }
+    out.push(part);
+  }
+  return out;
+}
+
+/** Decode a Bash ANSI-C quoted string body ($'...') into its value. */
+function decodeAnsiC(raw: string): string {
+  let out = "";
+  let i = 0;
+  const hex = /[0-9a-fA-F]/;
+  const oct = /[0-7]/;
+  while (i < raw.length) {
+    const c = raw.charAt(i);
+    if (c !== "\\" || i + 1 >= raw.length) {
+      out += c;
+      i += 1;
+      continue;
+    }
+    const e = raw.charAt(i + 1);
+    switch (e) {
+      case "a":
+        out += "\x07";
+        i += 2;
+        break;
+      case "b":
+        out += "\b";
+        i += 2;
+        break;
+      case "e":
+      case "E":
+        out += "\x1b";
+        i += 2;
+        break;
+      case "f":
+        out += "\f";
+        i += 2;
+        break;
+      case "n":
+        out += "\n";
+        i += 2;
+        break;
+      case "r":
+        out += "\r";
+        i += 2;
+        break;
+      case "t":
+        out += "\t";
+        i += 2;
+        break;
+      case "v":
+        out += "\v";
+        i += 2;
+        break;
+      case "\\":
+      case "'":
+      case '"':
+      case "?":
+        out += e;
+        i += 2;
+        break;
+      case "c": {
+        const cx = raw.charAt(i + 2);
+        if (cx === "") {
+          out += "\\c";
+          i += 2;
+          break;
+        }
+        out += String.fromCharCode(cx.toUpperCase().charCodeAt(0) & 0x1f);
+        i += 3;
+        break;
+      }
+      case "x": {
+        let j = i + 2;
+        while (j < raw.length && j < i + 4 && hex.test(raw.charAt(j))) j++;
+        if (j === i + 2) {
+          out += "\\x";
+          i += 2;
+          break;
+        }
+        out += String.fromCodePoint(Number.parseInt(raw.slice(i + 2, j), 16));
+        i = j;
+        break;
+      }
+      case "u":
+      case "U": {
+        const len = e === "u" ? 4 : 8;
+        const digits = raw.slice(i + 2, i + 2 + len);
+        if (digits.length !== len || ![...digits].every((d) => hex.test(d))) {
+          out += `\\${e}`;
+          i += 2;
+          break;
+        }
+        const cp = Number.parseInt(digits, 16);
+        out += cp <= 0x10ffff ? String.fromCodePoint(cp) : `\\${e}${digits}`;
+        i += 2 + len;
+        break;
+      }
+      default: {
+        if (oct.test(e)) {
+          let j = i + 1;
+          while (j < raw.length && j < i + 4 && oct.test(raw.charAt(j))) j++;
+          out += String.fromCodePoint(Number.parseInt(raw.slice(i + 1, j), 8));
+          i = j;
+          break;
+        }
+        // Unknown escape: the backslash stays literal, as in Bash.
+        out += `\\${e}`;
+        i += 2;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Text a token part contributes when matching textual boundaries inside an
+ * array element (`[index]=`). Substitution parts contribute nothing; escaped
+ * literals are invisible per the quoting-fidelity contract.
+ */
+function arrayElemVisibleText(part: TokenWordPart): string {
+  switch (part.type) {
+    case "lit":
+      return part.escaped === true ? "" : part.value;
+    case "sgl":
+      return part.value;
+    case "dbl":
+      return part.parts.map(arrayElemVisibleText).join("");
+    default:
+      return "";
+  }
+}
+
+/** Shift a literal part's position by `chars` (same line). */
+function shiftPos(pos: Pos, chars: number): Pos {
+  return { offset: pos.offset + chars, line: pos.line, col: pos.col + chars };
+}
+
+/**
+ * Slice a literal token part to [from, to) of its value. Returns undefined
+ * when the slice is empty.
+ */
+function sliceLitPart(
+  part: TokenWordPart & { type: "lit" },
+  from: number,
+  to: number,
+): TokenWordPart | undefined {
+  if (to - from <= 0) return undefined;
+  return {
+    ...part,
+    value: part.value.slice(from, to),
+    pos: shiftPos(part.pos, from),
+    end: shiftPos(part.pos, to),
+  };
+}
+
+/**
+ * Split an array element's token parts at the `[index]=` boundary, matching
+ * only on literal text (substitution parts are skipped for the match but
+ * kept in the result, so embedded `$(...)` stays structured). Returns
+ * undefined when the element is not an indexed assignment.
+ */
+function splitIndexedArrayElem(parts: TokenWordPart[]):
+  | {
+      index: TokenWordPart[];
+      value: TokenWordPart[];
+    }
+  | undefined {
+  const chunks = parts.map((part) => ({
+    part,
+    text: arrayElemVisibleText(part),
+  }));
+  // Map each visible character to its chunk location.
+  let vis = "";
+  const vpos: Array<{ chunk: number; offset: number }> = [];
+  chunks.forEach((chunk, ci) => {
+    for (let k = 0; k < chunk.text.length; k++) {
+      vis += chunk.text.charAt(k);
+      vpos.push({ chunk: ci, offset: k });
+    }
+  });
+  if (!vis.startsWith("[")) return undefined;
+  let closeAt = -1;
+  for (let k = 1; k + 1 < vis.length; k++) {
+    if (vis.charAt(k) === "]" && vis.charAt(k + 1) === "=") {
+      closeAt = k;
+      break;
+    }
+  }
+  if (closeAt === -1) return undefined;
+  const openLoc = vpos[0];
+  const closeLoc = vpos[closeAt];
+  const eqLoc = vpos[closeAt + 1];
+  if (!openLoc || !closeLoc || !eqLoc) return undefined;
+  // The delimiters themselves must be plain literal characters.
+  for (const loc of [openLoc, closeLoc, eqLoc]) {
+    if (chunks[loc.chunk]?.part.type !== "lit") return undefined;
+  }
+  // Nothing but empty quote parts may sit between `]` and `=`.
+  for (let ci = closeLoc.chunk + 1; ci < eqLoc.chunk; ci++) {
+    const chunk = chunks[ci];
+    if (!chunk) return undefined;
+    if (chunk.text.length > 0) return undefined;
+    const t = chunk.part.type;
+    if (t !== "sgl" && t !== "dbl") return undefined;
+  }
+  const index: TokenWordPart[] = [];
+  const value: TokenWordPart[] = [];
+  chunks.forEach((chunk, ci) => {
+    if (ci < openLoc.chunk) return;
+    if (ci > eqLoc.chunk) {
+      value.push(chunk.part);
+      return;
+    }
+    const p = chunk.part;
+    if (p.type !== "lit") {
+      // Non-literal chunks fully inside the index region stay structured.
+      if (ci > openLoc.chunk && ci < closeLoc.chunk) index.push(chunk.part);
+      return;
+    }
+    const from = ci === openLoc.chunk ? openLoc.offset + 1 : 0;
+    const to = ci === closeLoc.chunk ? closeLoc.offset : p.value.length;
+    const idx = sliceLitPart(p, from, to);
+    if (idx) index.push(idx);
+    if (ci === eqLoc.chunk) {
+      const val = sliceLitPart(p, eqLoc.offset + 1, p.value.length);
+      if (val) value.push(val);
+    }
+  });
+  if (index.length === 0) return undefined;
+  return { index, value };
+}
+
+/** True for parts that carry only literal/quoted text (no expansions). */
+function isQuotablePart(part: TokenWordPart): boolean {
+  switch (part.type) {
+    case "lit":
+    case "sgl":
+      return true;
+    case "dbl":
+      return part.parts.every(isQuotablePart);
+    default:
+      return false;
+  }
+}
+
+/** Decoded text of a quotable part (what arithmetic evaluation sees). */
+function quotableText(part: TokenWordPart): string {
+  switch (part.type) {
+    case "lit":
+    case "sgl":
+      return part.value;
+    case "dbl":
+      return part.parts.map(quotableText).join("");
+    default:
+      return "";
+  }
+}
+
+/** Decl variants whose indexed-assignment operands bash evaluates as
+ * arithmetic, surfacing substitutions hidden by quoting. */
+const ARITH_DECL_VARIANTS = new Set(["declare", "typeset", "local"]);
 
 /** Human-readable description of a token, for error messages. */
 function describeToken(token: Token | undefined): string {
@@ -177,12 +556,20 @@ export class Parser {
     private readonly options: ParseOptions = {},
   ) {}
 
-  /** Yield each top-level statement as it's parsed. */
+  /**
+   * Yield each top-level statement as it's parsed. Statements carrying
+   * heredocs are yielded only after their bodies have been drained, so a
+   * yielded statement is always complete (no mutation after the yield).
+   */
   *statementsSeq(): Generator<Statement> {
     this.skipSeparators();
     while (!this.isEof()) {
-      yield this.parseStatement();
+      const stmt = this.parseStatement();
+      // Heredoc bodies arrive after the newline that ends the command
+      // line; consume separators (draining pending heredoc bodies to
+      // their redirects) before yielding so the statement is complete.
       this.skipSeparators();
+      yield stmt;
     }
   }
 
@@ -1046,7 +1433,11 @@ export class Parser {
     const token = this.peek();
     if (token?.type !== "word" || token.parts.length !== 1) return false;
     const part = token.parts[0];
-    return part?.type === "lit" && DECL_KEYWORDS.has(part.value);
+    return (
+      part?.type === "lit" &&
+      part.escaped !== true &&
+      DECL_KEYWORDS.has(part.value)
+    );
   }
 
   private parseDeclClause(): DeclClause {
@@ -1086,7 +1477,12 @@ export class Parser {
         }
 
         this.consume();
-        args.push(this.wordFromToken(token));
+        const word = this.wordFromToken(token);
+        args.push(
+          ARITH_DECL_VARIANTS.has(variant)
+            ? this.arithOperandWord(token, word)
+            : word,
+        );
         continue;
       }
 
@@ -1121,7 +1517,7 @@ export class Parser {
       if (this.matchWord()) {
         const token = this.consume();
         if (token.type !== "word") break;
-        exprs.push(this.wordFromToken(token));
+        exprs.push(this.arithOperandWord(token, this.wordFromToken(token)));
         continue;
       }
 
@@ -1253,16 +1649,26 @@ export class Parser {
       if (!redirect) break;
       const bodyToken = this.consume();
       if (bodyToken.type !== "heredoc-body") break;
+      // Contract token-api.md §4: bodies of unquoted delimiters arrive with
+      // `expand: true`; parse them expansion-aware so embedded `$(...)` and
+      // friends surface as structured parts.
+      const parts =
+        bodyToken.expand === true
+          ? this.scanExpansionText(bodyToken.content, { base: bodyToken.pos })
+          : undefined;
       redirect.heredoc = {
         type: "Word",
-        parts: [
-          {
-            type: "Literal",
-            value: bodyToken.content,
-            pos: bodyToken.pos,
-            end: bodyToken.end,
-          },
-        ],
+        parts:
+          parts && parts.length > 0
+            ? parts
+            : [
+                {
+                  type: "Literal",
+                  value: bodyToken.content,
+                  pos: bodyToken.pos,
+                  end: bodyToken.end,
+                },
+              ],
         pos: bodyToken.pos,
         end: bodyToken.end,
       };
@@ -1270,47 +1676,48 @@ export class Parser {
     }
   }
 
-  private convertWordPart(part: TokenWordPart): WordPart {
+  private convertWordPart(part: TokenWordPart, base?: Pos): WordPart {
+    const anchor = (pos: Pos): Pos => (base ? rebasePos(pos, base) : pos);
     switch (part.type) {
       case "lit":
         return {
           type: "Literal",
           value: part.value,
-          pos: part.pos,
-          end: part.end,
+          pos: anchor(part.pos),
+          end: anchor(part.end),
         };
       case "sgl":
         return {
           type: "SglQuoted",
           value: part.value,
-          pos: part.pos,
-          end: part.end,
+          pos: anchor(part.pos),
+          end: anchor(part.end),
         };
       case "dbl":
         return {
           type: "DblQuoted",
-          parts: part.parts.map((p) => this.convertWordPart(p)),
-          pos: part.pos,
-          end: part.end,
+          parts: part.parts.map((p) => this.convertWordPart(p, base)),
+          pos: anchor(part.pos),
+          end: anchor(part.end),
         };
       case "param":
-        return this.convertParamExp(part);
+        return this.convertParamExp(part, base);
       case "cmd-subst": {
-        const innerTokens = tokenize(part.raw);
-        const innerParser = new Parser(innerTokens);
-        const prog = innerParser.parseProgram();
-        return {
+        const node: CmdSubst = {
           type: "CmdSubst",
-          stmts: prog.body,
-          pos: part.pos,
-          end: part.end,
+          stmts: this.parseSubstBody(part.raw, part, base),
+          pos: anchor(part.pos),
+          end: anchor(part.end),
         };
+        substOpenLen.set(node, part.innerOffset - part.pos.offset);
+        return node;
       }
       case "arith-exp": {
+        const pos = anchor(part.pos);
         const x = parseArithmetic(part.raw, {
-          offset: part.innerOffset,
-          line: part.pos.line,
-          col: part.pos.col + 3,
+          offset: pos.offset + (part.innerOffset - part.pos.offset),
+          line: pos.line,
+          col: pos.col + 3,
         });
         if (!x) {
           throw new Error("Empty arithmetic expansion");
@@ -1318,72 +1725,321 @@ export class Parser {
         return {
           type: "ArithExp",
           x,
-          pos: part.pos,
-          end: part.end,
+          pos,
+          end: anchor(part.end),
         };
       }
       case "proc-subst": {
-        const innerTokens = tokenize(part.raw);
-        const innerParser = new Parser(innerTokens);
-        const prog = innerParser.parseProgram();
-        return {
+        const node: ProcSubst = {
           type: "ProcSubst",
           op: part.op,
-          stmts: prog.body,
-          pos: part.pos,
-          end: part.end,
+          stmts: this.parseSubstBody(part.raw, part, base),
+          pos: anchor(part.pos),
+          end: anchor(part.end),
         };
+        substOpenLen.set(node, part.innerOffset - part.pos.offset);
+        return node;
       }
       case "backtick": {
-        const innerTokens = tokenize(part.raw);
-        const innerParser = new Parser(innerTokens);
-        const prog = innerParser.parseProgram();
-        return {
+        // `body` (contract token-api.md §3) is the backtick-decoded inner
+        // text; fall back to the verbatim `raw` for pre-contract tokens.
+        // The body starts right after the opening backtick.
+        const inner = typeof part.body === "string" ? part.body : part.raw;
+        const origin = { pos: part.pos, innerOffset: part.pos.offset + 1 };
+        const node: CmdSubst = {
           type: "CmdSubst",
-          stmts: prog.body,
-          pos: part.pos,
-          end: part.end,
+          stmts: this.parseSubstBody(inner, origin, base),
+          pos: anchor(part.pos),
+          end: anchor(part.end),
         };
+        substOpenLen.set(node, 1);
+        return node;
       }
-      case "ext-glob":
+      case "ansi-c":
         return {
+          type: "AnsiC",
+          value: decodeAnsiC(part.value),
+          raw: part.value,
+          pos: anchor(part.pos),
+          end: anchor(part.end),
+        };
+      case "locale-str":
+        return {
+          type: "LocaleStr",
+          parts: part.parts.map((p) => this.convertWordPart(p, base)),
+          pos: anchor(part.pos),
+          end: anchor(part.end),
+        };
+      case "ext-glob": {
+        const node: ExtGlob = {
           type: "ExtGlob",
           op: part.op,
           pattern: part.pattern,
-          pos: part.pos,
-          end: part.end,
+          pos: anchor(part.pos),
+          end: anchor(part.end),
         };
+        // Parse the pattern structurally so expansions inside it surface.
+        // The pattern starts right after the two-character operator.
+        const patternBase: Pos = {
+          offset: part.pos.offset + 2,
+          line: part.pos.line,
+          col: part.pos.col + 2,
+        };
+        const word = this.wordFromShellSource(
+          part.pattern,
+          anchor(patternBase),
+        );
+        const single = word.parts[0];
+        if (!(word.parts.length === 1 && single?.type === "Literal")) {
+          node.word = word;
+        }
+        return node;
+      }
     }
   }
 
-  private convertParamExp(part: TokenWordPart & { type: "param" }): ParamExp {
+  /**
+   * Parse a substitution body (`$(...)`, `<(...)`, backticks). When `base`
+   * is given, the part lives in a reparsed fragment and every descendant
+   * position is anchored to the source; the body starts at `innerOffset`.
+   */
+  private parseSubstBody(
+    raw: string,
+    part: { pos: Pos; innerOffset: number },
+    base: Pos | undefined,
+  ): Statement[] {
+    const innerTokens = tokenize(raw);
+    const innerParser = new Parser(innerTokens);
+    const prog = innerParser.parseProgram();
+    if (base) {
+      const bodyBase = rebasePos(
+        {
+          offset: part.innerOffset,
+          line: part.pos.line,
+          col: part.pos.col + (part.innerOffset - part.pos.offset),
+        },
+        base,
+      );
+      rebaseTree(prog.body, bodyBase);
+    }
+    return prog.body;
+  }
+
+  /**
+   * Fold a raw source fragment (captured verbatim by the tokenizer, e.g. a
+   * `${...}` operator operand or an extglob pattern) into a single Word by
+   * re-tokenizing it. Expansions recover their structure; quotes merge back
+   * into the literal text around them. When `base` is given, fragment
+   * positions are anchored to the source.
+   */
+  private wordFromShellSource(raw: string, base?: Pos): Word {
+    const tokens = tokenize(raw, this.options);
+    const map = new SourceMap(raw);
+    const parts: WordPart[] = [];
+    const anchor = (pos?: Pos): Pos | undefined =>
+      pos && base ? rebasePos(pos, base) : pos;
+    // Re-tokenization splits the fragment at whitespace and other gaps;
+    // restore the exact source text between consecutive tokens so the
+    // folded word stays faithful to the fragment.
+    let lastEnd = 0;
+    const pushGap = (upto: number) => {
+      if (upto <= lastEnd) return;
+      pushLiteral(
+        parts,
+        raw.slice(lastEnd, upto),
+        anchor(map.posAt(lastEnd)),
+        anchor(map.posAt(upto)),
+      );
+    };
+    for (const tok of tokens) {
+      pushGap(tok.pos.offset);
+      lastEnd = tok.end.offset;
+      switch (tok.type) {
+        case "word":
+          for (const part of tok.parts) {
+            if (part.type === "lit") {
+              pushLiteral(
+                parts,
+                part.value,
+                anchor(part.pos),
+                anchor(part.end),
+              );
+            } else {
+              parts.push(this.convertWordPart(part, base));
+            }
+          }
+          break;
+        case "op":
+        case "symbol":
+          pushLiteral(parts, tok.value, anchor(tok.pos), anchor(tok.end));
+          break;
+        case "redir":
+          pushLiteral(
+            parts,
+            `${tok.fd ?? ""}${tok.op}`,
+            anchor(tok.pos),
+            anchor(tok.end),
+          );
+          break;
+        case "comment":
+          pushLiteral(parts, `#${tok.text}`, anchor(tok.pos), anchor(tok.end));
+          break;
+        default:
+          // arith-cmd / heredoc-body cannot appear inside these fragments.
+          break;
+      }
+    }
+    pushGap(raw.length);
+    return parts.length === 0 ? strToWord("") : { type: "Word", parts };
+  }
+
+  /**
+   * Scan `text` for expansions only (no quote or word-splitting semantics):
+   * `$name`, `${...}`, `$(...)`, `$((...))` and backticks become structured
+   * parts; everything else stays literal. A backslash before `$`, `` ` `` or
+   * `\` decodes to the literal character (heredoc-body rule). `escaped(i)`
+   * marks characters that came from an escape-provenance literal part; they
+   * never start an expansion.
+   */
+  private scanExpansionText(
+    text: string,
+    opts: { base?: Pos; escaped?: (index: number) => boolean } = {},
+  ): WordPart[] {
+    const map = new SourceMap(text);
+    const escaped = opts.escaped ?? (() => false);
+    const anchor = (pos: Pos): Pos | undefined =>
+      opts.base ? rebasePos(pos, opts.base) : undefined;
+    const parts: WordPart[] = [];
+    let lit = "";
+    let litStart = 0;
+    let i = 0;
+    const flushLit = (endOffset: number) => {
+      if (lit.length === 0) return;
+      pushLiteral(
+        parts,
+        lit,
+        anchor(map.posAt(litStart)),
+        anchor(map.posAt(endOffset)),
+      );
+      lit = "";
+    };
+    while (i < text.length) {
+      const c = text.charAt(i);
+      if (!escaped(i) && c === "\\" && i + 1 < text.length) {
+        const n = text.charAt(i + 1);
+        if (n === "$" || n === "`" || n === "\\") {
+          if (lit.length === 0) litStart = i;
+          lit += n;
+          i += 2;
+          continue;
+        }
+      }
+      if (!escaped(i) && (c === "$" || c === "`")) {
+        const scanned =
+          c === "$"
+            ? scanExpansion(text, i, map, this.options)
+            : scanBacktick(text, i, map);
+        if (scanned) {
+          flushLit(i);
+          parts.push(this.convertWordPart(scanned.part, opts.base));
+          i = scanned.end;
+          continue;
+        }
+      }
+      if (lit.length === 0) litStart = i;
+      lit += c;
+      i += 1;
+    }
+    flushLit(text.length);
+    return parts;
+  }
+
+  /**
+   * Bash evaluates the indexed-assignment operands of `let` and
+   * `declare`/`typeset`/`local` as arithmetic text, and array-subscript
+   * evaluation expands `$(...)`/backticks even when the operand was quoted.
+   * Rebuild such operands so the substitutions surface as structured parts;
+   * other operands stay plain.
+   */
+  private arithOperandWord(token: Token & { type: "word" }, word: Word): Word {
+    // Parts that are already structured surface substitutions already.
+    if (!token.parts.every(isQuotablePart)) return word;
+    const flat = token.parts.map(quotableText).join("");
+    if (!/^[A-Za-z_][A-Za-z0-9_]*\[/.test(flat)) return word;
+    const escapedSet = new Set<number>();
+    let offset = 0;
+    for (const part of token.parts) {
+      const text = quotableText(part);
+      if (part.type === "lit" && part.escaped === true) {
+        for (let k = 0; k < text.length; k++) escapedSet.add(offset + k);
+      }
+      offset += text.length;
+    }
+    const scanned = this.scanExpansionText(flat, {
+      escaped: (i) => escapedSet.has(i),
+    });
+    if (!scanned.some((p) => p.type !== "Literal")) return word;
+    return { type: "Word", parts: scanned, pos: token.pos, end: token.end };
+  }
+
+  private convertParamExp(
+    part: TokenWordPart & { type: "param" },
+    base?: Pos,
+  ): ParamExp {
+    const anchor = (pos: Pos): Pos => (base ? rebasePos(pos, base) : pos);
+    const pos = anchor(part.pos);
     const out: ParamExp = {
       type: "ParamExp",
       short: !part.braced,
       param: { type: "Literal", value: part.name },
-      pos: part.pos,
-      end: part.end,
+      pos,
+      end: anchor(part.end),
     };
     if (part.length) out.length = true;
     if (part.excl) out.excl = true;
+    // Fragments (index/slice/replace/operator word) are verbatim substrings
+    // of the `${...}` source; each starts right after its syntactic marker.
+    // Track the source text from the expansion start so base positions
+    // account for newlines inside earlier fragments.
+    let prefix = part.braced ? "${" : "$";
+    if (part.length) prefix += "#";
+    if (part.excl) prefix += "!";
+    prefix += part.name;
+    const baseAfter = (text: string): Pos => absPos(pos, text, text.length);
     if (part.index !== undefined) {
-      out.index = strToWord(part.index);
+      out.index = this.wordFromShellSource(part.index, baseAfter(`${prefix}[`));
+      prefix += `[${part.index}]`;
     }
     if (part.slice) {
       const slice: ParamExp["slice"] = {
-        offset: strToWord(part.slice.offset),
+        offset: this.wordFromShellSource(
+          part.slice.offset,
+          baseAfter(`${prefix}:`),
+        ),
       };
       if (part.slice.length !== undefined) {
-        slice.length = strToWord(part.slice.length);
+        slice.length = this.wordFromShellSource(
+          part.slice.length,
+          baseAfter(`${prefix}:${part.slice.offset}:`),
+        );
       }
       out.slice = slice;
     }
     if (part.replace) {
+      const marker = `/${part.replace.all ? "/" : ""}${
+        part.replace.prefix ? "#" : part.replace.suffix ? "%" : ""
+      }`;
       const r: ParamExp["replace"] = {
-        orig: strToWord(part.replace.orig),
+        orig: this.wordFromShellSource(
+          part.replace.orig,
+          baseAfter(prefix + marker),
+        ),
       };
       if (part.replace.with !== undefined)
-        r.with = strToWord(part.replace.with);
+        r.with = this.wordFromShellSource(
+          part.replace.with,
+          baseAfter(`${prefix + marker + part.replace.orig}/`),
+        );
       if (part.replace.all) r.all = true;
       if (part.replace.prefix) r.prefix = true;
       if (part.replace.suffix) r.suffix = true;
@@ -1393,7 +2049,11 @@ export class Parser {
       const exp: ParamExp["exp"] = {
         op: part.exp.op as ParamExpOp,
       };
-      if (part.exp.value !== undefined) exp.word = strToWord(part.exp.value);
+      if (part.exp.value !== undefined)
+        exp.word = this.wordFromShellSource(
+          part.exp.value,
+          baseAfter(prefix + part.exp.op),
+        );
       out.exp = exp;
     }
     return out;
@@ -1402,7 +2062,9 @@ export class Parser {
   private wordFromToken(token: Token & { type: "word" }): Word {
     return {
       type: "Word",
-      parts: token.parts.map((part) => this.convertWordPart(part)),
+      parts: mergeLiteralParts(
+        token.parts.map((part) => this.convertWordPart(part)),
+      ),
       pos: token.pos,
       end: token.end,
     };
@@ -1416,28 +2078,50 @@ export class Parser {
     token: Token & { type: "word" },
   ): Assignment | undefined {
     const parts = token.parts;
-    if (parts.length !== 1) return undefined;
-    const part = parts[0];
-    if (part?.type !== "lit") return undefined;
-    const raw = part.value;
-
+    // The NAME must be built from plain unescaped literals; the delimiter
+    // (`=` or `+=`) must be an unescaped literal character. Anything else
+    // (quoted text, escapes, expansions) before the delimiter means the
+    // word is not an assignment, matching bash.
+    let name = "";
     let append = false;
-    let eqIndex = raw.indexOf("+=");
-    if (eqIndex > 0) {
-      append = true;
-    } else {
-      eqIndex = raw.indexOf("=");
+    let delimPartIdx = -1;
+    let delimCharIdx = -1;
+    for (let p = 0; p < parts.length; p++) {
+      const part = parts[p];
+      if (part?.type !== "lit" || part.escaped === true) {
+        return undefined;
+      }
+      const eq = part.value.indexOf("=");
+      if (eq === -1) {
+        name += part.value;
+        continue;
+      }
+      if (eq > 0 && part.value.charAt(eq - 1) === "+") {
+        append = true;
+        name += part.value.slice(0, eq - 1);
+      } else {
+        name += part.value.slice(0, eq);
+      }
+      delimPartIdx = p;
+      delimCharIdx = eq;
+      break;
     }
-    if (eqIndex <= 0) return undefined;
-
-    const name = raw.slice(0, eqIndex);
+    if (delimPartIdx === -1) return undefined;
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return undefined;
 
-    const afterEq = raw.slice(eqIndex + (append ? 2 : 1));
+    const delimPart = parts[delimPartIdx] as TokenWordPart & { type: "lit" };
+    const valueParts: TokenWordPart[] = [];
+    const head = sliceLitPart(
+      delimPart,
+      delimCharIdx + 1,
+      delimPart.value.length,
+    );
+    if (head) valueParts.push(head);
+    valueParts.push(...parts.slice(delimPartIdx + 1));
 
     const nextToken = this.peekToken(1);
     if (
-      afterEq === "" &&
+      valueParts.length === 0 &&
       nextToken?.type === "symbol" &&
       (nextToken as { value: string }).value === "("
     ) {
@@ -1463,10 +2147,12 @@ export class Parser {
       end: token.end,
     };
     if (append) assignment.append = true;
-    if (afterEq.length > 0) {
+    if (valueParts.length > 0) {
       assignment.value = {
         type: "Word",
-        parts: [{ type: "Literal", value: afterEq }],
+        parts: valueParts.map((p) => this.convertWordPart(p)),
+        pos: valueParts[0]?.pos ?? token.pos,
+        end: token.end,
       };
     }
     return assignment;
@@ -1498,26 +2184,31 @@ export class Parser {
         throw new Error("Expected word in array expression");
       }
 
-      const text = tokenPartsText(token.parts);
-
-      // Check for [index]=value pattern
-      const indexMatch = text.match(/^\[([^\]]+)\]=(.*)$/);
-      if (indexMatch) {
-        const indexStr = indexMatch[1] as string;
-        const valStr = indexMatch[2] as string;
+      // Indexed element `[index]=value`: match the boundary on literal
+      // text only, keeping structured index/value parts so expansions
+      // like `[0$(cmd)]=$(cmd2)` stay visible (do not flatten with
+      // tokenPartsText, which erases substitution parts).
+      const split = splitIndexedArrayElem(token.parts);
+      if (split) {
+        const indexParts = split.index.map((p) => this.convertWordPart(p));
         const elem: ArrayElem = {
           type: "ArrayElem",
           index: {
             type: "Word",
-            parts: [{ type: "Literal", value: indexStr }],
+            parts: indexParts,
+            pos: indexParts[0]?.pos ?? token.pos,
+            end: indexParts[indexParts.length - 1]?.end ?? token.end,
           },
           pos: token.pos,
           end: token.end,
         };
-        if (valStr.length > 0) {
+        if (split.value.length > 0) {
+          const valueParts = split.value.map((p) => this.convertWordPart(p));
           elem.value = {
             type: "Word",
-            parts: [{ type: "Literal", value: valStr }],
+            parts: valueParts,
+            pos: valueParts[0]?.pos ?? token.pos,
+            end: valueParts[valueParts.length - 1]?.end ?? token.end,
           };
         }
         elems.push(elem);
@@ -1629,7 +2320,10 @@ export class Parser {
     const token = this.peek();
     if (token?.type !== "word" || token.parts.length !== 1) return false;
     const part = token.parts[0];
-    return part?.type === "lit" && part.value === value;
+    // Escape-provenance literals never contribute to keyword matching.
+    return (
+      part?.type === "lit" && part.escaped !== true && part.value === value
+    );
   }
 
   private matchKeywordIn(values: string[]) {
@@ -1671,6 +2365,7 @@ export class Parser {
       token.type !== "word" ||
       token.parts.length !== 1 ||
       token.parts[0]?.type !== "lit" ||
+      token.parts[0].escaped === true ||
       token.parts[0].value !== value
     ) {
       throw new Error(`Expected keyword ${value}`);

@@ -14,13 +14,30 @@ concurrency:
 # workflow_run executes in the default branch context, where github.sha can
 # move past the commit that CI actually tested. Manual runs use the commit
 # selected when the workflow was dispatched.
+#
+# RELEASE_SHA is event-supplied (workflow_run.head_sha), and the workflow_run
+# `branches` filter matches the triggering run's head branch name, which a
+# fork PR author controls. Jobs below hold write permissions and check this
+# SHA out, so release-pr's `if:` must verify the triggering run came from a
+# same-repository push to main before any privileged job can run.
 env:
   RELEASE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
   release-pr:
     name: Create release PR
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    # Origin gate: only runs dispatched manually, or triggered by a CI run
+    # that itself came from a push to main on this repository. A fork PR can
+    # name its head branch `main` and satisfy the workflow_run `branches`
+    # filter, so conclusion alone is not enough. All downstream jobs need
+    # this job transitively, so this is the authoritative gate.
+    if: ${{
+      github.event_name == 'workflow_dispatch' || (
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'main'
+      ) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -96,6 +113,10 @@ jobs:
   prepare-package:
     name: Build package
     needs: release-pr
+    # Reached only when release-pr ran; its origin gate is the authoritative
+    # check that the triggering CI run came from this repo's main branch.
+    # A skipped release-pr cascades here, so do not add always() without
+    # mirroring that gate.
     if: needs.release-pr.outputs.has-changesets == 'false'
     runs-on: ubuntu-latest
     permissions:
@@ -198,6 +219,10 @@ jobs:
   github-release:
     name: Create GitHub release
     needs: [prepare-package, stage-package]
+    # Reached only via release-pr -> prepare-package -> stage-package, so
+    # release-pr's origin gate transitively protects this job. A skipped
+    # stage-package makes its result != 'success', so do not add always()
+    # without mirroring that gate.
     if: needs.stage-package.result == 'success'
     runs-on: ubuntu-latest
     permissions:
