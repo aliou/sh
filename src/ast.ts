@@ -191,6 +191,30 @@ export type ExtGlob = Located & {
   type: "ExtGlob";
   op: ExtGlobOp;
   pattern: string;
+  /**
+   * Structural word parsed from {@link pattern}. Set whenever the pattern
+   * is not a pure literal (i.e. quotes or expansions are present), so
+   * embedded `$(...)` and friends surface as `CmdSubst`/`ProcSubst` nodes.
+   * Consumers that only read `pattern` are unaffected.
+   */
+  word?: Word;
+};
+/**
+ * A Bash ANSI-C quoted string `$'...'`. `value` is the escape-decoded
+ * content (Bash §ANSI-C Quoting); `raw` keeps the inner text verbatim.
+ */
+export type AnsiC = Located & {
+  type: "AnsiC";
+  value: string;
+  raw: string;
+};
+/**
+ * A Bash locale translation string `$"..."`. Inner parts follow the
+ * double-quoted-string grammar.
+ */
+export type LocaleStr = Located & {
+  type: "LocaleStr";
+  parts: WordPart[];
 };
 export type WordPart =
   | Literal
@@ -201,7 +225,9 @@ export type WordPart =
   | ArithExp
   | ProcSubst
   | BraceExp
-  | ExtGlob;
+  | ExtGlob
+  | AnsiC
+  | LocaleStr;
 export type Word = Located & { type: "Word"; parts: WordPart[] };
 export type Assignment = Located & {
   type: "Assignment";

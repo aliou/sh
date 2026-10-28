@@ -1,4 +1,5 @@
 export {
+  type AnsiC,
   type ArithCmd,
   type ArithExp,
   type ArithExpr,
@@ -28,6 +29,7 @@ export {
   type IfClause,
   type LetClause,
   type Literal,
+  type LocaleStr,
   type Logical,
   NO_POS,
   type ParamExp,
