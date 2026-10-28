@@ -3,6 +3,7 @@ import { checkLang } from "../dialect";
 import { isDigit, isNameChar, isNameStart, specialParams } from "./charsets";
 import type { SourceMap } from "./cursor";
 import type { TokenWordPart } from "./types";
+import { findAnsiCEnd } from "./utils";
 
 export function scanExpansion(
   source: string,
@@ -65,14 +66,10 @@ export function scanExpansion(
 
   // ${...} braced parameter expansion
   if (next === "{") {
-    let j = pos + 2;
-    let depth = 1;
-    while (j < source.length && depth > 0) {
-      if (source.charAt(j) === "{") depth++;
-      if (source.charAt(j) === "}") depth--;
-      j++;
-    }
-    const inner = source.slice(pos + 2, j - 1);
+    const close = findBracedEnd(source, pos + 2);
+    if (close === -1) return null;
+    const j = close + 1;
+    const inner = source.slice(pos + 2, close);
     if (
       inner.charAt(0) === "!" &&
       /^![A-Za-z_][A-Za-z0-9_]*[*@]$/.test(inner)
@@ -97,6 +94,158 @@ export function scanExpansion(
   }
 
   return null;
+}
+
+/**
+ * Find the offset of the unescaped closing double quote starting the scan at
+ * `from`, or -1 when unterminated. Backslash escapes the next character.
+ */
+function findDoubleQuoteEnd(source: string, from: number): number {
+  let j = from;
+  while (j < source.length) {
+    const c = source.charAt(j);
+    if (c === "\\") {
+      j += 2;
+      continue;
+    }
+    if (c === '"') return j;
+    j += 1;
+  }
+  return -1;
+}
+
+/** Find the offset of the closing backtick, honoring `\` escapes, or -1. */
+function findBacktickEnd(source: string, from: number): number {
+  let j = from;
+  while (j < source.length) {
+    const c = source.charAt(j);
+    if (c === "\\") {
+      j += 2;
+      continue;
+    }
+    if (c === "`") return j;
+    j += 1;
+  }
+  return -1;
+}
+
+/**
+ * Find the offset of the `)` closing a `$(` whose inner text starts at
+ * `from`, quote/escape aware, or -1 when unterminated.
+ */
+function findParenEnd(source: string, from: number): number {
+  let depth = 1;
+  let j = from;
+  while (j < source.length) {
+    const c = source.charAt(j);
+    if (c === "\\") {
+      j += 2;
+      continue;
+    }
+    if (c === "'") {
+      const close = source.indexOf("'", j + 1);
+      if (close === -1) return -1;
+      j = close + 1;
+      continue;
+    }
+    if (c === '"') {
+      const close = findDoubleQuoteEnd(source, j + 1);
+      if (close === -1) return -1;
+      j = close + 1;
+      continue;
+    }
+    if (c === "`") {
+      const close = findBacktickEnd(source, j + 1);
+      if (close === -1) return -1;
+      j = close + 1;
+      continue;
+    }
+    if (c === "$") {
+      const n = source.charAt(j + 1);
+      if (n === "{") {
+        // A `)` inside a nested ${...} must not close this $(...) span.
+        const close = findBracedEnd(source, j + 2);
+        if (close === -1) return -1;
+        j = close + 1;
+        continue;
+      }
+      if (n === "'") {
+        const close = findAnsiCEnd(source, j + 2);
+        if (close === -1) return -1;
+        j = close + 1;
+        continue;
+      }
+      j += 1;
+      continue;
+    }
+    if (c === "(") depth += 1;
+    else if (c === ")") {
+      depth -= 1;
+      if (depth === 0) return j;
+    }
+    j += 1;
+  }
+  return -1;
+}
+
+/**
+ * Find the offset of the `}` closing a `${` whose inner text starts at
+ * `from`. Quote/escape aware: `{`/`}` inside `'...'`, `"..."`, `$'...'`,
+ * backticks, `$(...)`, or preceded by `\` do not count toward brace depth.
+ * Returns -1 when no matching `}` exists under these rules.
+ */
+function findBracedEnd(source: string, from: number): number {
+  let depth = 1;
+  let j = from;
+  while (j < source.length) {
+    const c = source.charAt(j);
+    if (c === "\\") {
+      j += 2;
+      continue;
+    }
+    if (c === "'") {
+      const close = source.indexOf("'", j + 1);
+      if (close === -1) return -1;
+      j = close + 1;
+      continue;
+    }
+    if (c === '"') {
+      const close = findDoubleQuoteEnd(source, j + 1);
+      if (close === -1) return -1;
+      j = close + 1;
+      continue;
+    }
+    if (c === "`") {
+      const close = findBacktickEnd(source, j + 1);
+      if (close === -1) return -1;
+      j = close + 1;
+      continue;
+    }
+    if (c === "$") {
+      const n = source.charAt(j + 1);
+      if (n === "'") {
+        const close = findAnsiCEnd(source, j + 2);
+        if (close === -1) return -1;
+        j = close + 1;
+        continue;
+      }
+      if (n === "(") {
+        const close = findParenEnd(source, j + 2);
+        if (close === -1) return -1;
+        j = close + 1;
+        continue;
+      }
+      j += 1;
+      continue;
+    }
+    if (c === "{") depth += 1;
+    else if (c === "}") {
+      depth -= 1;
+      if (depth === 0) return j;
+    }
+    j += 1;
+  }
+  return -1;
 }
 
 function shortParam(
