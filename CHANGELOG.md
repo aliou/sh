@@ -1,5 +1,11 @@
 # @aliou/sh
 
+## 0.3.5
+
+### Patch Changes
+
+- b0aed19: Ship `CHANGELOG.md` in the npm tarball so pi can show the changelog when the extension updates.
+
 ## 0.3.4
 
 ### Patch Changes
