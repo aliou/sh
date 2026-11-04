@@ -1,6 +1,6 @@
 # @aliou/sh
 
-Shell parser and typed AST for TypeScript. Handles POSIX, Bash, mksh, and zsh syntax. Zero runtime dependencies, ~66 KB bundled.
+Shell parser and typed AST for TypeScript. Handles POSIX, Bash, mksh, and zsh syntax. Zero runtime dependencies, ~73 KB bundled.
 
 ## Install
 
@@ -94,7 +94,7 @@ for (const word of parseWordsSeq(source)) { /* one word at a time */ }
 
 ## Other exports
 
-- `splitBraces(word)` — expand `{a,b}` / `{1..5}` brace expansion into a word. The parser does not emit brace expansions by default.
+- `splitBraces(word)` — expand `{a,b}` / `{1..5}` brace expansions in place inside a word (mutates the word; returns whether it changed). The parser does not emit brace expansions by default.
 - `NO_POS` — sentinel position for nodes you build by hand.
 - Full TypeScript types for every AST node.
 
@@ -112,7 +112,7 @@ for (const word of parseWordsSeq(source)) { /* one word at a time */ }
 - Arrays: `arr=(a b c)`, `arr=([0]=x [1]=y)`
 - Control flow: `if/elif/else/fi`, `while/until`, `for/in`, `select/in`, `case/esac`
 - Functions, subshells, blocks, `[[ ]]`, `(( ))`, `coproc`, `time`, `!`
-- Extended globs `@(foo)`, `*(bar)` (Bash/mksh)
+- Extended globs `@(foo)`, `*(bar)` (Bash/mksh/zsh)
 - Comments (with `keepComments: true`)
 
 ## Status

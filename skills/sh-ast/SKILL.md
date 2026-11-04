@@ -62,7 +62,7 @@ Words in commands contain typed parts:
 | `ArithExp` | `$((1 + 2))` |
 | `ProcSubst` | `<(cmd)`, `>(cmd)` |
 | `BraceExp` | `{a,b}`, `{1..5}` (via `splitBraces`) |
-| `ExtGlob` | `@(foo)`, `*(bar)` (Bash/mksh) |
+| `ExtGlob` | `@(foo)`, `*(bar)` (Bash/mksh/zsh) |
 
 ### Positions
 
