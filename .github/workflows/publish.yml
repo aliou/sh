@@ -72,6 +72,11 @@ jobs:
       - name: Get release info
         id: release-info
         run: |
+          # changeset status computes the merge base against a local "main"
+          # branch. The RELEASE_SHA checkout above is detached and creates no
+          # local branches, so recreate "main" from its remote-tracking ref
+          # before invoking changesets.
+          git branch -q --no-track main origin/main
           pnpm changeset status --output=release.json 2>/dev/null || echo '{"releases":[]}' > release.json
           node <<NODE
           const fs = require('fs');
