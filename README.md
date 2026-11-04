@@ -1,6 +1,6 @@
 # @aliou/sh
 
-Shell parser and typed AST for TypeScript. Handles POSIX, Bash, mksh, and zsh syntax. Zero runtime dependencies, ~66 KB bundled.
+Shell parser and typed AST for TypeScript. Handles POSIX, Bash, mksh, and zsh syntax. Zero runtime dependencies, ~73 KB bundled (~17 KB gzipped).
 
 ## Install
 
@@ -91,6 +91,10 @@ import { parseStmtsSeq, parseWordsSeq } from "@aliou/sh";
 for (const stmt of parseStmtsSeq(source)) { /* one statement at a time */ }
 for (const word of parseWordsSeq(source)) { /* one word at a time */ }
 ```
+
+## Agent skill
+
+The npm package ships a bundled agent skill, `skills/sh-ast/SKILL.md`, that documents the AST and common analysis recipes (extracting commands, tracking variable mutations, spotting unsafe patterns) for agents that consume the parser programmatically. Point your agent at that file, or copy it into your skills directory.
 
 ## Other exports
 
