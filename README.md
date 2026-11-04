@@ -128,6 +128,7 @@ nix develop
 pnpm install
 pnpm test        # vitest
 pnpm test src/parser/redirects.test.ts   # run a single test file
+pnpm test --watch    # vitest in watch mode
 pnpm typecheck   # tsc --noEmit
 pnpm lint        # biome
 pnpm build       # rolldown + declarations
