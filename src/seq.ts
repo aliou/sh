@@ -1,4 +1,3 @@
-const unusedProbe = 1;
 import type { ParseOptions, Statement, Word } from "./ast";
 import { Parser } from "./parser";
 import { tokenize } from "./tokenizer";
