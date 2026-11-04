@@ -127,6 +127,7 @@ Requires [Nix](https://nixos.org/) for the dev shell:
 nix develop
 pnpm install
 pnpm test        # vitest
+pnpm test src/parser/redirects.test.ts   # run a single test file
 pnpm typecheck   # tsc --noEmit
 pnpm lint        # biome
 pnpm build       # rolldown + declarations
