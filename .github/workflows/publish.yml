@@ -219,7 +219,7 @@ jobs:
       - name: Stage package
         env:
           NPM_CONFIG_PROVENANCE: true
-        run: npm stage publish "package-artifact/${{ needs.prepare-package.outputs.tarball }}"
+        run: npm stage publish "./package-artifact/${{ needs.prepare-package.outputs.tarball }}"
 
   github-release:
     name: Create GitHub release
