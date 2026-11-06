@@ -49,6 +49,47 @@ describe("recoverErrors mode", () => {
     expect(result.errors?.[0]?.pos).toBeDefined();
     expect(result.errors?.[0]?.pos.line).toBeGreaterThan(0);
   });
+
+  it("preserves an unterminated heredoc command", () => {
+    const source = "rm -r -f /tmp/example <<$EOF\nx\nEOF\n";
+    expect(() => parse(source)).toThrow('Unclosed heredoc "$EOF"');
+
+    const { ast, errors } = parse(source, { recoverErrors: true });
+
+    expect(errors).toHaveLength(1);
+    expect(errors?.[0]?.message).toBe('Unclosed heredoc "$EOF"');
+    expect(ast.body).toHaveLength(1);
+    expect(ast.body[0]?.command).toMatchObject({
+      type: "SimpleCommand",
+      words: [
+        { parts: [{ type: "Literal", value: "rm" }] },
+        { parts: [{ type: "Literal", value: "-r" }] },
+        { parts: [{ type: "Literal", value: "-f" }] },
+        { parts: [{ type: "Literal", value: "/tmp/example" }] },
+      ],
+      redirects: [
+        {
+          op: "<<",
+          heredoc: { parts: [{ type: "Literal", value: "x\nEOF\n" }] },
+        },
+      ],
+    });
+  });
+
+  it("preserves a heredoc command without a body", () => {
+    const { ast, errors } = parse("cat <<EOF", { recoverErrors: true });
+
+    expect(errors).toHaveLength(1);
+    expect(errors?.[0]?.message).toBe('Unclosed heredoc "EOF"');
+    expect(ast.body).toHaveLength(1);
+    expect(ast.body[0]?.command).toMatchObject({
+      type: "SimpleCommand",
+      words: [{ parts: [{ type: "Literal", value: "cat" }] }],
+      redirects: [
+        { op: "<<", target: { parts: [{ type: "Literal", value: "EOF" }] } },
+      ],
+    });
+  });
 });
 
 describe("recoverErrors mode: inner programs", () => {

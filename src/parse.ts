@@ -18,7 +18,7 @@ function parseRecovering(source: string, options: ParseOptions): ParseResult {
   const errors: ParseError[] = [];
   let tokens: ReturnType<typeof tokenize>;
   try {
-    tokens = tokenize(source, options);
+    tokens = tokenize(source, options, errors);
   } catch (e) {
     errors.push({
       message: e instanceof Error ? e.message : String(e),

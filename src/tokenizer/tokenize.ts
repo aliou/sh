@@ -1,4 +1,4 @@
-import type { ParseOptions } from "../ast";
+import type { ParseError, ParseOptions } from "../ast";
 import { checkLang } from "../dialect";
 import {
   isDigit,
@@ -16,7 +16,11 @@ import { tryRedirOp } from "./scan-redir";
 import type { SymbolTokenValue, Token, TokenWordPart } from "./types";
 import { findAnsiCEnd, heredocDelimiter } from "./utils";
 
-export function tokenize(source: string, options: ParseOptions = {}): Token[] {
+export function tokenize(
+  source: string,
+  options: ParseOptions = {},
+  errors?: ParseError[],
+): Token[] {
   const map = new SourceMap(source);
   const tokens: Token[] = [];
   let i = 0;
@@ -150,7 +154,9 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
           body += `${logical}\n`;
         }
         if (!terminated) {
-          throw new Error(`Unclosed heredoc "${hd.delimiter}"`);
+          const message = `Unclosed heredoc "${hd.delimiter}"`;
+          if (!errors) throw new Error(message);
+          errors.push({ message, pos: map.posAt(bodyStart) });
         }
         tokens.push({
           type: "heredoc-body",
@@ -638,7 +644,9 @@ export function tokenize(source: string, options: ParseOptions = {}): Token[] {
   // heredoc body is empty and the terminator never appears.
   const pendingHeredoc = heredocQueue[0];
   if (pendingHeredoc) {
-    throw new Error(`Unclosed heredoc "${pendingHeredoc.delimiter}"`);
+    const message = `Unclosed heredoc "${pendingHeredoc.delimiter}"`;
+    if (!errors) throw new Error(message);
+    errors.push({ message, pos: map.posAt(source.length) });
   }
 
   return tokens;
