@@ -1,5 +1,11 @@
 # @aliou/sh
 
+## 0.4.1
+
+### Patch Changes
+
+- 812d043: Preserve command ASTs and heredoc bodies through end of input for unterminated heredocs when error recovery is enabled.
+
 ## 0.4.0
 
 ### Minor Changes
